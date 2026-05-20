@@ -1,0 +1,11 @@
+# Build and object files
+build/
+*.o
+
+# Compiled binaries
+bin/
+
+# Temporary and editor files
+*.swp
+*~
+.DS_Store
