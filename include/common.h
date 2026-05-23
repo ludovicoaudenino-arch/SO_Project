@@ -1,0 +1,26 @@
+#ifndef COMMON_H
+#define COMMON_H
+
+#define MAX_DISH_TYPES 10
+
+#define STATION_PRIMI 0
+#define STATION_SECONDI 1
+#define STATION_COFFEE 2
+#define STATION_CASSA 3
+
+#define NUM_STATIONS 4
+
+#define SEM_MUTEX_SHM 0
+#define SEM_SEATS_PRIMI 1
+#define SEM_SEATS_SECONDI 2
+#define SEM_SEATS_COFFEE 3
+#define SEM_SEATS_CASSA 4
+#define SEM_TABLE_SEATS 5
+#define SEM_READY 6
+#define SEM_DAY_START 7
+#define SEM_MUTEX_STATS 8
+#define SEM_MUTEX_PORZIONI_P 9
+#define SEM_MUTEX_PORZIONI_S 10
+#define NUM_SEMS 11
+
+#endif

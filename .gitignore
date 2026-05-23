@@ -9,3 +9,6 @@ bin/
 *.swp
 *~
 .DS_Store
+
+#Staff
+staff/
