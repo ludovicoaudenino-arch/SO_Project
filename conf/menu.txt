@@ -1,0 +1,12 @@
+# Menu della mensa - Oasi del Golfo
+# Formato: TIPO:NOME_PIATTO
+
+PRIMO:Pasta al pomodoro
+PRIMO:Risotto ai funghi
+SECONDO:Cotoletta con patate
+SECONDO:Pesce al forno con verdure
+COFFEE:Caffè normale
+COFFEE:Caffè macchiato
+COFFEE:Caffè decaffeinato
+COFFEE:Caffè al ginseng
+DOLCE:Tiramisù

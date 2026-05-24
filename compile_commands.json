@@ -9,11 +9,130 @@
       "-Iinclude",
       "-c",
       "-o",
+      "build/responsabile_mensa.o",
+      "src/responsabile_mensa.c"
+    ],
+    "directory": "/home/aude/Scaricati/SO_Project",
+    "file": "/home/aude/Scaricati/SO_Project/src/responsabile_mensa.c",
+    "output": "/home/aude/Scaricati/SO_Project/build/responsabile_mensa.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wvla",
+      "-Wextra",
+      "-Werror",
+      "-D_GNU_SOURCE",
+      "-Iinclude",
+      "-c",
+      "-o",
       "build/config.o",
       "src/config.c"
     ],
     "directory": "/home/aude/Scaricati/SO_Project",
     "file": "/home/aude/Scaricati/SO_Project/src/config.c",
     "output": "/home/aude/Scaricati/SO_Project/build/config.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wvla",
+      "-Wextra",
+      "-Werror",
+      "-D_GNU_SOURCE",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "build/ipc_utils.o",
+      "src/ipc_utils.c"
+    ],
+    "directory": "/home/aude/Scaricati/SO_Project",
+    "file": "/home/aude/Scaricati/SO_Project/src/ipc_utils.c",
+    "output": "/home/aude/Scaricati/SO_Project/build/ipc_utils.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wvla",
+      "-Wextra",
+      "-Werror",
+      "-D_GNU_SOURCE",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "build/time_utils.o",
+      "src/time_utils.c"
+    ],
+    "directory": "/home/aude/Scaricati/SO_Project",
+    "file": "/home/aude/Scaricati/SO_Project/src/time_utils.c",
+    "output": "/home/aude/Scaricati/SO_Project/build/time_utils.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wvla",
+      "-Wextra",
+      "-Werror",
+      "-D_GNU_SOURCE",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "build/stats.o",
+      "src/stats.c"
+    ],
+    "directory": "/home/aude/Scaricati/SO_Project",
+    "file": "/home/aude/Scaricati/SO_Project/src/stats.c",
+    "output": "/home/aude/Scaricati/SO_Project/build/stats.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wvla",
+      "-Wextra",
+      "-Werror",
+      "-D_GNU_SOURCE",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "build/operatore.o",
+      "src/operatore.c"
+    ],
+    "directory": "/home/aude/Scaricati/SO_Project",
+    "file": "/home/aude/Scaricati/SO_Project/src/operatore.c",
+    "output": "/home/aude/Scaricati/SO_Project/build/operatore.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wvla",
+      "-Wextra",
+      "-Werror",
+      "-D_GNU_SOURCE",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "build/operatore_cassa.o",
+      "src/operatore_cassa.c"
+    ],
+    "directory": "/home/aude/Scaricati/SO_Project",
+    "file": "/home/aude/Scaricati/SO_Project/src/operatore_cassa.c",
+    "output": "/home/aude/Scaricati/SO_Project/build/operatore_cassa.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-Wvla",
+      "-Wextra",
+      "-Werror",
+      "-D_GNU_SOURCE",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "build/utente.o",
+      "src/utente.c"
+    ],
+    "directory": "/home/aude/Scaricati/SO_Project",
+    "file": "/home/aude/Scaricati/SO_Project/src/utente.c",
+    "output": "/home/aude/Scaricati/SO_Project/build/utente.o"
   }
 ]

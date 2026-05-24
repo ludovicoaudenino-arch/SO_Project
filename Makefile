@@ -1,28 +1,41 @@
-CC      = gcc
-CFLAGS  = -Wvla -Wextra -Werror -D_GNU_SOURCE -Iinclude
-LDFLAGS =
+CC       = gcc
+CFLAGS   = -Wvla -Wextra -Werror -D_GNU_SOURCE -Iinclude
+LDFLAGS  =
 
 SRC_DIR   = src
 BUILD_DIR = build
 BIN_DIR   = bin
 
-# Moduli comuni esistenti (attualmente solo il parser config)
-COMMON_OBJS = $(BUILD_DIR)/config.o
+# Common modules (compiled as .o and linked into every executable)
+COMMON_OBJS = $(BUILD_DIR)/config.o $(BUILD_DIR)/ipc_utils.o \
+              $(BUILD_DIR)/time_utils.o $(BUILD_DIR)/stats.o
 
-# Unico target eseguibile abilitato per adesso
-TARGETS = $(BIN_DIR)/responsabile_mensa
+# Executables
+TARGETS = $(BIN_DIR)/responsabile_mensa \
+          $(BIN_DIR)/operatore \
+          $(BIN_DIR)/operatore_cassa \
+          $(BIN_DIR)/utente
 
 all: dirs $(TARGETS)
 
 dirs:
 	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 
-# Regola generica per .c -> .o
+# Generic rule: .c -> .o
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Eseguibile del responsabile (linka il suo main + il parser)
+# Executables (each links its own .o + common modules)
 $(BIN_DIR)/responsabile_mensa: $(BUILD_DIR)/responsabile_mensa.o $(COMMON_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BIN_DIR)/operatore: $(BUILD_DIR)/operatore.o $(COMMON_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BIN_DIR)/operatore_cassa: $(BUILD_DIR)/operatore_cassa.o $(COMMON_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BIN_DIR)/utente: $(BUILD_DIR)/utente.o $(COMMON_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 clean:

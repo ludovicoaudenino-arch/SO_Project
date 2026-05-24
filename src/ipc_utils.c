@@ -1,0 +1,126 @@
+#include "ipc_utils.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <sys/sem.h>
+#include <sys/shm.h>
+
+int create_shared_memory(size_t size) {
+  int shm_id = shmget(IPC_PRIVATE, size, (IPC_CREAT | IPC_EXCL) | 0666);
+  if (shm_id == -1) {
+    perror("ERROR CREATING SHM");
+    exit(EXIT_FAILURE);
+  }
+
+  return shm_id;
+}
+
+void *attach_shared_memory(int shmid) {
+  if (shmid < 0) {
+    fprintf(stderr, "INVALID ARGUMENT FOR %s\n", __func__);
+    return NULL;
+  }
+
+  void *shm = shmat(shmid, NULL, 0);
+  if (shm == (void *)-1) {
+    perror("ERROR ATTACHING SHM");
+    exit(EXIT_FAILURE);
+  }
+
+  return shm;
+}
+
+void detach_shared_memory(void *ptr) {
+  if (ptr == NULL) {
+    fprintf(stderr, "INVALID ARGUMENT FOR %s\n", __func__);
+    return;
+  }
+
+  if (shmdt(ptr) == -1) {
+    perror("ERRORE DETACHING SHM");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void remove_shared_memory(int shmid) {
+  if (shmid < 0) {
+    fprintf(stderr, "INVALID ARGUMENT FOR %s\n", __func__);
+    return;
+  }
+
+  if (shmctl(shmid, IPC_RMID, NULL) == -1) {
+    perror("ERRORE DELETING SHM");
+    exit(EXIT_FAILURE);
+  }
+}
+
+int create_semaphore_set(int nsems) {
+  if (nsems < 0) {
+    fprintf(stderr, "INVALID ARGUMENT FOR %s\n", __func__);
+    return -1;
+  }
+
+  int sem_id = semget(IPC_PRIVATE, nsems, (IPC_CREAT | IPC_EXCL) | 0666);
+  if (sem_id == -1) {
+    perror("ERROR CREATING SEMAPHORES");
+    exit(EXIT_FAILURE);
+  }
+
+  return sem_id;
+}
+
+void sem_op(int semid, int sem_num, int op) {
+  struct sembuf sb = {sem_num, op, 0};
+  if (semop(semid, &sb, 1) == -1) {
+    perror("ERROR SEMOP");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void remove_semaphores(int semid) {
+  if (semid < 0) {
+    fprintf(stderr, "INVALID ARGUMENT FOR %s\n", __func__);
+    return;
+  }
+
+  if (semctl(semid, 0, IPC_RMID)) {
+    perror("ERROR REMOVING SEMAPHORE");
+    exit(EXIT_FAILURE);
+  }
+
+  return;
+}
+
+int create_message_queue() {
+  int msg_id = msgget(IPC_PRIVATE, (IPC_CREAT | IPC_EXCL) | 0666);
+  if (msg_id == -1) {
+    perror("ERROR CREATING MSG QUEUE");
+    exit(EXIT_FAILURE);
+  }
+
+  return msg_id;
+}
+
+void send_message(int mqid, void *msg, size_t size) {
+  if (msgsnd(mqid, msg, size, 0) == -1) {
+    perror("ERROR SENDING MESSAGE");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void receive_message(int mqid, void *msg, size_t size, long mtype) {
+
+  if (msgrcv(mqid, msg, size, mtype, 0) == -1) {
+    perror("ERROR RECIVING MESSAGE");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void remove_message_queue(int mqid) {
+
+  if (msgctl(mqid, IPC_RMID, NULL) == -1) {
+    perror("ERROR DELETING MSGQ");
+    exit(EXIT_FAILURE);
+  }
+}
