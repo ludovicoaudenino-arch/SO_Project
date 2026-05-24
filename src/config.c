@@ -112,5 +112,3 @@ int parse_config(const char *path, Config *conf) {
   fclose(f);
   return 0;
 }
-
-cioa
