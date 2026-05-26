@@ -2,24 +2,28 @@
 #include "config.h"
 #include "ipc_utils.h"
 #include "shared_data.h"
+#include "time_utils.h"
 #include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define OPERATOR_CASSA_PATH "./bin/operatore_cassa"
 #define OPERATOR_PATH "./bin/operatore"
 #define USER_PATH "./bin/utente"
-#define ARGC_MAX_LENGHT 16
+#define ARGC_MAX_LENGTH 16
+#define TOTAL_CHILDREN ((shm->config.nof_workers) + (shm->config.nof_users))
+#define SIM_DAY_SECOND (8 * 60 * 60)
 
-int shm_id = -1;
-int sem_id = -1;
-int msg_id = -1;
-struct SharedData *shm = NULL;
-pid_t *operators = NULL;
-pid_t *users = NULL;
+static int shm_id = -1;
+static int sem_id = -1;
+static int msg_id = -1;
+static struct SharedData *shm = NULL;
+static pid_t *operators = NULL;
+static pid_t *users = NULL;
 struct StationInfo {
   int station_id;
   int station_avg_srvc;
@@ -28,6 +32,9 @@ struct StationInfo {
 };
 
 static void cleanup_ipc() {
+  if (shm != NULL) {
+    detach_shared_memory(shm);
+  }
   if (shm_id != -1) {
     remove_shared_memory(shm_id);
   }
@@ -37,14 +44,24 @@ static void cleanup_ipc() {
   if (msg_id != -1) {
     remove_message_queue(msg_id);
   }
-  if (shm != NULL) {
-    detach_shared_memory(shm);
-  }
   if (operators != NULL) {
     free(operators);
   }
   if (users != NULL) {
     free(users);
+  }
+}
+
+static void wait_for_children() {
+  if (operators != NULL) {
+    for (int i = 0; i < shm->config.nof_workers; i++) {
+      waitpid(operators[i], NULL, 0);
+    }
+  }
+  if (users != NULL) {
+    for (int i = 0; i < shm->config.nof_users; i++) {
+      waitpid(users[i], NULL, 0);
+    }
   }
 }
 
@@ -161,8 +178,8 @@ static pid_t spawn_operator(int target_station) {
   }
 
   if (pid == 0) {
-    char shm_str[ARGC_MAX_LENGHT], sem_str[ARGC_MAX_LENGHT],
-        msg_str[ARGC_MAX_LENGHT], target_station_str[ARGC_MAX_LENGHT];
+    char shm_str[ARGC_MAX_LENGTH], sem_str[ARGC_MAX_LENGTH],
+        msg_str[ARGC_MAX_LENGTH], target_station_str[ARGC_MAX_LENGTH];
     snprintf(shm_str, sizeof(shm_str), "%d", shm_id);
     snprintf(sem_str, sizeof(sem_str), "%d", sem_id);
     snprintf(msg_str, sizeof(msg_str), "%d", msg_id);
@@ -184,15 +201,14 @@ static pid_t spawn_operator(int target_station) {
 }
 
 static pid_t spawn_user() {
-
   pid_t pid = fork();
   if (pid == -1) {
     perror("FORK FAILED");
     exit(EXIT_FAILURE);
   }
   if (pid == 0) {
-    char shm_str[ARGC_MAX_LENGHT], sem_str[ARGC_MAX_LENGHT],
-        msg_str[ARGC_MAX_LENGHT];
+    char shm_str[ARGC_MAX_LENGTH], sem_str[ARGC_MAX_LENGTH],
+        msg_str[ARGC_MAX_LENGTH];
     snprintf(shm_str, sizeof(shm_str), "%d", shm_id);
     snprintf(sem_str, sizeof(sem_str), "%d", sem_id);
     snprintf(msg_str, sizeof(msg_str), "%d", msg_id);
@@ -205,7 +221,6 @@ static pid_t spawn_user() {
 }
 
 static void initialize_operators() {
-
   struct StationInfo station_info[4] = {
       {STATION_PRIMI, shm->config.avg_srvc_primi, 0,
        shm->config.nof_wk_seats_primi},
@@ -233,8 +248,6 @@ static void initialize_users() {
 }
 
 int main(int argc, char *argv[]) {
-  (void)argc;
-  (void)argv;
 
   set_exit();
 
@@ -266,5 +279,33 @@ int main(int argc, char *argv[]) {
 
   initialize_users();
 
-  return 0;
+  shm->simulation_running = 1;
+
+  for (int current_day = 1; current_day <= shm->config.sim_duration;
+       current_day++) {
+    sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN, 0);
+    sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
+    shm->current_day = current_day;
+    shm->day_running = 1;
+    for (int j = 0; j < shm->nof_type_primi; j++) {
+      shm->portion_left_primi[j] = shm->config.avg_refill_primi;
+    }
+    for (int j = 0; j < shm->nof_type_secondi; j++) {
+      shm->portion_left_secondi[j] = shm->config.avg_refill_secondi;
+    }
+    sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
+    sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN, 0);
+    sim_sleep(SIM_DAY_SECOND, shm->config.n_nano_secs);
+    sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
+    shm->day_running = 0;
+    sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
+  }
+
+  sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
+  shm->simulation_running = 0;
+  sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
+
+  wait_for_children();
+
+  exit(0);
 }
