@@ -1,3 +1,13 @@
+/**
+ * @file responsabile_mensa.c
+ * @brief Main coordinator process for the cafeteria simulation.
+ *
+ * This process creates all IPC resources (shared memory, semaphores,
+ * message queue), spawns operator and user child processes, and
+ * orchestrates the daily simulation cycle including synchronization
+ * barriers, portion refills, and graceful shutdown.
+ */
+
 #include "common.h"
 #include "config.h"
 #include "ipc_utils.h"
@@ -31,6 +41,13 @@ struct StationInfo {
   int max_assignement;
 };
 
+/**
+ * @brief Releases all IPC resources and dynamic memory at process exit.
+ *
+ * Registered via atexit() to guarantee cleanup even on abnormal
+ * termination. Detaches shared memory before removing it to avoid
+ * operating on an already-destroyed segment.
+ */
 static void cleanup_ipc() {
   if (shm != NULL) {
     detach_shared_memory(shm);
@@ -52,6 +69,13 @@ static void cleanup_ipc() {
   }
 }
 
+/**
+ * @brief Blocks until every spawned child process has terminated.
+ *
+ * Iterates over the operators and users PID arrays, calling waitpid()
+ * on each one. Must be called before cleanup_ipc() to ensure children
+ * have finished using IPC resources.
+ */
 static void wait_for_children() {
   if (operators != NULL) {
     for (int i = 0; i < shm->config.nof_workers; i++) {
@@ -65,11 +89,25 @@ static void wait_for_children() {
   }
 }
 
+/**
+ * @brief Signal handler for SIGINT.
+ *
+ * Triggers a clean exit which in turn invokes the atexit-registered
+ * cleanup_ipc() function to release all IPC resources.
+ *
+ * @param sig Signal number (unused).
+ */
 static void handle_signal(int sig) {
   (void)sig;
   exit(EXIT_FAILURE);
 }
 
+/**
+ * @brief Registers cleanup handlers and signal dispositions.
+ *
+ * Registers cleanup_ipc() with atexit() and installs handle_signal()
+ * as the SIGINT handler via sigaction().
+ */
 static void set_exit() {
   atexit(cleanup_ipc);
 
@@ -79,12 +117,25 @@ static void set_exit() {
   sigaction(SIGINT, &sa, NULL);
 }
 
+/**
+ * @brief Creates and attaches the shared memory segment.
+ *
+ * Allocates a System V shared memory segment sized for SharedData,
+ * attaches it to the process address space, and zero-initializes it.
+ */
 static void initialize_shm() {
   shm_id = create_shared_memory(sizeof(struct SharedData));
   shm = attach_shared_memory(shm_id);
   memset(shm, 0, sizeof(struct SharedData));
 }
 
+/**
+ * @brief Creates and initializes the System V semaphore set.
+ *
+ * Allocates NUM_SEMS semaphores and sets their initial values:
+ * mutexes to 1, station seats to the configured capacity,
+ * and barrier semaphores (SEM_READY, SEM_DAY_START) to 0.
+ */
 static void initialize_sem() {
   sem_id = create_semaphore_set(NUM_SEMS);
   unsigned short sem_init_vals[NUM_SEMS];
@@ -102,6 +153,16 @@ static void initialize_sem() {
   set_all_semaphores(sem_id, sem_init_vals);
 }
 
+/**
+ * @brief Parses the menu file and initializes food portions in shared memory.
+ *
+ * Counts the number of first and second course types by scanning for
+ * "PRIMO:" and "SECONDO:" prefixes, then sets the initial portion
+ * quantities for each dish type.
+ *
+ * @param path Path to the menu file.
+ * @return 0 on success, -1 if the file cannot be opened.
+ */
 static int read_menu_file(const char *path) {
   FILE *f = fopen(path, "r");
   if (f == NULL) {
@@ -129,6 +190,14 @@ static int read_menu_file(const char *path) {
   return 0;
 }
 
+/**
+ * @brief Sorts stations by average service time in descending order.
+ *
+ * Uses selection sort to prioritize stations with longer service times
+ * during the operator assignment phase.
+ *
+ * @param station_info Array of NUM_STATIONS StationInfo structs to sort.
+ */
 static void sort_station_info(struct StationInfo station_info[]) {
   for (int i = 0; i < 3; i++) {
     for (int j = i + 1; j < 4; j++) {
@@ -141,6 +210,17 @@ static void sort_station_info(struct StationInfo station_info[]) {
   }
 }
 
+/**
+ * @brief Determines which station to assign to the operator at the given index.
+ *
+ * The first NUM_STATIONS operators are assigned one per station (in priority
+ * order). Additional operators are distributed using a weighted ratio that
+ * balances service time against current assignment count.
+ *
+ * @param station_info Array of station metadata (modified in place).
+ * @param index Zero-based index of the operator being assigned.
+ * @return Station ID on success, -1 if all stations are at capacity.
+ */
 static int get_target_station(struct StationInfo station_info[], int index) {
   int target_station = -1;
 
@@ -170,6 +250,15 @@ static int get_target_station(struct StationInfo station_info[], int index) {
   return target_station;
 }
 
+/**
+ * @brief Forks and execs an operator process for the given station.
+ *
+ * Passes IPC identifiers (shm_id, sem_id, msg_id) and the target station
+ * as command-line arguments. Cashier operators use a separate executable.
+ *
+ * @param target_station Station ID to assign (STATION_PRIMI, etc.).
+ * @return PID of the spawned child process.
+ */
 static pid_t spawn_operator(int target_station) {
   pid_t pid = fork();
   if (pid == -1) {
@@ -200,6 +289,14 @@ static pid_t spawn_operator(int target_station) {
   return pid;
 }
 
+/**
+ * @brief Forks and execs a user (utente) process.
+ *
+ * Passes IPC identifiers (shm_id, sem_id, msg_id) as command-line
+ * arguments to the child process.
+ *
+ * @return PID of the spawned child process.
+ */
 static pid_t spawn_user() {
   pid_t pid = fork();
   if (pid == -1) {
@@ -220,6 +317,13 @@ static pid_t spawn_user() {
   return pid;
 }
 
+/**
+ * @brief Spawns all operator processes using the station assignment policy.
+ *
+ * Builds a StationInfo array from the current configuration, sorts it by
+ * service time priority, and assigns each operator to the most appropriate
+ * station via get_target_station().
+ */
 static void initialize_operators() {
   struct StationInfo station_info[4] = {
       {STATION_PRIMI, shm->config.avg_srvc_primi, 0,
@@ -241,6 +345,12 @@ static void initialize_operators() {
   }
 }
 
+/**
+ * @brief Spawns all user (utente) processes.
+ *
+ * Iterates over the configured number of users and stores each
+ * child PID in the users array for later waitpid() collection.
+ */
 static void initialize_users() {
   for (int i = 0; i < shm->config.nof_users; i++) {
     users[i] = spawn_user();
@@ -249,8 +359,10 @@ static void initialize_users() {
 
 int main(int argc, char *argv[]) {
 
+  /* --- Phase 1: Setup signal handlers and atexit cleanup --- */
   set_exit();
 
+  /* --- Phase 2: Create IPC resources and parse configuration --- */
   initialize_shm();
 
   parse_config((argc > 1) ? argv[1] : NULL, &shm->config);
@@ -264,14 +376,15 @@ int main(int argc, char *argv[]) {
 
   msg_id = create_message_queue();
 
+  /* --- Phase 3: Allocate PID arrays and spawn child processes --- */
   operators = malloc(shm->config.nof_workers * sizeof(pid_t));
   if (operators == NULL) {
-    perror("ERRROR MALLOC OPERATORS");
+    perror("ERROR MALLOC OPERATORS");
     exit(EXIT_FAILURE);
   }
   users = malloc(shm->config.nof_users * sizeof(pid_t));
   if (users == NULL) {
-    perror("ERRROR MALLOC USERS");
+    perror("ERROR MALLOC USERS");
     exit(EXIT_FAILURE);
   }
 
@@ -281,9 +394,13 @@ int main(int argc, char *argv[]) {
 
   shm->simulation_running = 1;
 
+  /* --- Phase 4: Daily simulation loop --- */
   for (int current_day = 1; current_day <= shm->config.sim_duration;
        current_day++) {
+    /* Wait for all children to signal readiness at the barrier */
     sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN, 0);
+
+    /* Prepare the new day state under mutex protection */
     sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
     shm->current_day = current_day;
     shm->day_running = 1;
@@ -294,17 +411,24 @@ int main(int argc, char *argv[]) {
       shm->portion_left_secondi[j] = shm->config.avg_refill_secondi;
     }
     sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
+
+    /* Broadcast day start: unblock all children simultaneously */
     sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN, 0);
+
+    /* Let the simulated workday elapse (8 hours) */
     sim_sleep(SIM_DAY_SECOND, shm->config.n_nano_secs);
+    /* Signal end of service for this day */
     sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
     shm->day_running = 0;
     sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
   }
 
+  /* --- Phase 5: Graceful shutdown --- */
   sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
   shm->simulation_running = 0;
   sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
 
+  /* Reap all child processes before IPC cleanup runs via atexit */
   wait_for_children();
 
   exit(0);
