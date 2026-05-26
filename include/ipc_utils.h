@@ -60,8 +60,30 @@ int create_semaphore_set(int nsems);
  * @param sem_num The index of the semaphore within the set.
  * @param op The operation to perform (e.g., -1 for wait/lock, +1 for
  * signal/unlock).
+ * @param flags The operation flags (e.g., 0, SEM_UNDO, IPC_NOWAIT).
  */
-void sem_op(int semid, int sem_num, int op);
+void sem_op(int semid, int sem_num, int op, short flags);
+
+/**
+ * @brief Sets the value of a specific semaphore.
+ * @param semid The semaphore set ID.
+ * @param sem_num The index of the semaphore within the set.
+ * @param val The value to set.
+ */
+void set_semaphore(int semid, int sem_num, int val);
+
+/**
+ * @brief Sets the values of all semaphores in a set simultaneously.
+ *
+ * This function performs a single System V IPC semctl() call with the
+ * SETALL command to initialize all semaphores within the set to the
+ * values provided in the input array.
+ *
+ * @param semid The semaphore set ID.
+ * @param values Pointer to an array of unsigned short values (must contain
+ *               at least as many elements as there are semaphores in the set).
+ */
+void set_all_semaphores(int semid, unsigned short *values);
 
 /**
  * @brief Removes a semaphore set from the system.
@@ -85,8 +107,9 @@ int create_message_queue();
  * @param mqid The message queue ID.
  * @param msg Pointer to the message structure (must start with long mtype).
  * @param size The size of the message text (excluding the mtype field).
+ * @param flags The operation flags (e.g., 0, IPC_NOWAIT).
  */
-void send_message(int mqid, void *msg, size_t size);
+void send_message(int mqid, void *msg, size_t size, int flags);
 
 /**
  * @brief Receives a message from the specified message queue.
@@ -95,8 +118,9 @@ void send_message(int mqid, void *msg, size_t size);
  * @param size The maximum size of the message text to receive.
  * @param mtype The type of message to receive (0 for first message, >0 for a
  * specific type).
+ * @param flags The operation flags (e.g., 0, IPC_NOWAIT).
  */
-void receive_message(int mqid, void *msg, size_t size, long mtype);
+void receive_message(int mqid, void *msg, size_t size, long mtype, int flags);
 
 /**
  * @brief Removes a message queue from the system.

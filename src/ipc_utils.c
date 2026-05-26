@@ -70,8 +70,36 @@ int create_semaphore_set(int nsems) {
   return sem_id;
 }
 
-void sem_op(int semid, int sem_num, int op) {
-  struct sembuf sb = {sem_num, op, 0};
+#if defined(__GNU_LIBRARY__) && !defined(_SEM_SEMUN_UNDEFINED)
+#else
+union semun {
+  int val;               /* value for SETVAL */
+  struct semid_ds *buf;  /* buffer for IPC_STAT, IPC_SET */
+  unsigned short *array; /* array for GETALL, SETALL */
+  struct seminfo *__buf; /* buffer for IPC_INFO */
+};
+#endif
+
+void set_semaphore(int semid, int sem_num, int val) {
+  union semun arg;
+  arg.val = val;
+  if (semctl(semid, sem_num, SETVAL, arg) == -1) {
+    perror("ERROR SETTING SEMAPHORE VALUE");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void set_all_semaphores(int semid, unsigned short *values) {
+  union semun arg;
+  arg.array = values;
+  if (semctl(semid, 0, SETALL, arg) == -1) {
+    perror("ERROR SETALL");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void sem_op(int semid, int sem_num, int op, short flags) {
+  struct sembuf sb = {sem_num, op, flags};
   if (semop(semid, &sb, 1) == -1) {
     perror("ERROR SEMOP");
     exit(EXIT_FAILURE);
@@ -102,16 +130,15 @@ int create_message_queue() {
   return msg_id;
 }
 
-void send_message(int mqid, void *msg, size_t size) {
-  if (msgsnd(mqid, msg, size, 0) == -1) {
+void send_message(int mqid, void *msg, size_t size, int flags) {
+  if (msgsnd(mqid, msg, size, flags) == -1) {
     perror("ERROR SENDING MESSAGE");
     exit(EXIT_FAILURE);
   }
 }
 
-void receive_message(int mqid, void *msg, size_t size, long mtype) {
-
-  if (msgrcv(mqid, msg, size, mtype, 0) == -1) {
+void receive_message(int mqid, void *msg, size_t size, long mtype, int flags) {
+  if (msgrcv(mqid, msg, size, mtype, flags) == -1) {
     perror("ERROR RECIVING MESSAGE");
     exit(EXIT_FAILURE);
   }
