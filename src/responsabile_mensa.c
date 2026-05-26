@@ -183,6 +183,27 @@ static pid_t spawn_operator(int target_station) {
   return pid;
 }
 
+static pid_t spawn_user() {
+
+  pid_t pid = fork();
+  if (pid == -1) {
+    perror("FORK FAILED");
+    exit(EXIT_FAILURE);
+  }
+  if (pid == 0) {
+    char shm_str[ARGC_MAX_LENGHT], sem_str[ARGC_MAX_LENGHT],
+        msg_str[ARGC_MAX_LENGHT];
+    snprintf(shm_str, sizeof(shm_str), "%d", shm_id);
+    snprintf(sem_str, sizeof(sem_str), "%d", sem_id);
+    snprintf(msg_str, sizeof(msg_str), "%d", msg_id);
+    execl(USER_PATH, "utente", shm_str, sem_str, msg_str, NULL);
+    perror("EXEC FAILED");
+    exit(EXIT_FAILURE);
+  }
+
+  return pid;
+}
+
 static void initialize_operators() {
 
   struct StationInfo station_info[4] = {
@@ -205,7 +226,11 @@ static void initialize_operators() {
   }
 }
 
-static void initialize_users() {}
+static void initialize_users() {
+  for (int i = 0; i < shm->config.nof_users; i++) {
+    users[i] = spawn_user();
+  }
+}
 
 int main(int argc, char *argv[]) {
   (void)argc;
@@ -238,6 +263,8 @@ int main(int argc, char *argv[]) {
   }
 
   initialize_operators();
+
+  initialize_users();
 
   return 0;
 }
