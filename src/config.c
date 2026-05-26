@@ -5,19 +5,19 @@
 #include <string.h>
 
 #define MATCH_INT(field)                                                       \
-  else if (strcmp(key, #field) == 0) {                                         \
+  else if (strcasecmp(key, #field) == 0) {                                     \
     conf->field = atoi(value);                                                 \
   }
 #define MATCH_LONG(field)                                                      \
-  else if (strcmp(key, #field) == 0) {                                         \
+  else if (strcasecmp(key, #field) == 0) {                                     \
     conf->field = atol(value);                                                 \
   }
 #define MATCH_FLOAT(field)                                                     \
-  else if (strcmp(key, #field) == 0) {                                         \
+  else if (strcasecmp(key, #field) == 0) {                                     \
     conf->field = atof(value);                                                 \
   }
 #define MATCH_STR(field)                                                       \
-  else if (strcmp(key, #field) == 0) {                                         \
+  else if (strcasecmp(key, #field) == 0) {                                     \
     strncpy(conf->field, value, sizeof(conf->field) - 1);                      \
     conf->field[sizeof(conf->field) - 1] = '\0';                               \
   }
@@ -94,7 +94,7 @@ int parse_config(const char *path, Config *conf) {
     MATCH_INT(nof_wk_seats_cassa)
     MATCH_INT(nof_table_seats)
     MATCH_INT(avg_srvc_primi)
-    MATCH_INT(avg_srvc_main_course)
+    MATCH_INT(avg_srvc_secondi)
     MATCH_INT(avg_srvc_coffee)
     MATCH_INT(avg_srvc_cassa)
     MATCH_INT(avg_refill_primi)

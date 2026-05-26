@@ -9,16 +9,17 @@
 #include <string.h>
 #include <unistd.h>
 
-#define MAX_WORKERS 100
 #define OPERATOR_CASSA_PATH "./bin/operatore_cassa"
 #define OPERATOR_PATH "./bin/operatore"
+#define USER_PATH "./bin/utente"
 #define ARGC_MAX_LENGHT 16
 
 int shm_id = -1;
 int sem_id = -1;
 int msg_id = -1;
 struct SharedData *shm = NULL;
-pid_t operators[MAX_WORKERS];
+pid_t *operators = NULL;
+pid_t *users = NULL;
 struct StationInfo {
   int station_id;
   int station_avg_srvc;
@@ -38,6 +39,12 @@ static void cleanup_ipc() {
   }
   if (shm != NULL) {
     detach_shared_memory(shm);
+  }
+  if (operators != NULL) {
+    free(operators);
+  }
+  if (users != NULL) {
+    free(users);
   }
 }
 
@@ -86,9 +93,9 @@ static int read_menu_file(const char *path) {
   char line[256];
   int p_count = 0, s_count = 0;
   while (fgets(line, sizeof(line), f) != NULL) {
-    if (strncmp(line, "PRIMO:", 6) == 0) {
+    if (strncmp(line, "PRIMO:", 6) == 0 && p_count < MAX_DISH_TYPES) {
       p_count++;
-    } else if (strncmp(line, "SECONDO:", 8) == 0) {
+    } else if (strncmp(line, "SECONDO:", 8) == 0 && s_count < MAX_DISH_TYPES) {
       s_count++;
     }
   }
@@ -103,6 +110,18 @@ static int read_menu_file(const char *path) {
     shm->portion_left_secondi[i] = shm->config.avg_refill_secondi;
   }
   return 0;
+}
+
+static void sort_station_info(struct StationInfo station_info[]) {
+  for (int i = 0; i < 3; i++) {
+    for (int j = i + 1; j < 4; j++) {
+      if (station_info[i].station_avg_srvc < station_info[j].station_avg_srvc) {
+        struct StationInfo tmp = station_info[j];
+        station_info[j] = station_info[i];
+        station_info[i] = tmp;
+      }
+    }
+  }
 }
 
 static int get_target_station(struct StationInfo station_info[], int index) {
@@ -134,7 +153,7 @@ static int get_target_station(struct StationInfo station_info[], int index) {
   return target_station;
 }
 
-static pid_t spawn_operators(int target_station) {
+static pid_t spawn_operator(int target_station) {
   pid_t pid = fork();
   if (pid == -1) {
     perror("FORK FAILED");
@@ -176,72 +195,17 @@ static void initialize_operators() {
       {STATION_CASSA, shm->config.avg_srvc_cassa, 0,
        shm->config.nof_wk_seats_cassa}};
 
-  for (int i = 0; i < 3; i++) {
-    for (int j = i + 1; j < 4; j++) {
-      if (station_info[i].station_avg_srvc < station_info[j].station_avg_srvc) {
-        struct StationInfo tmp = station_info[j];
-        station_info[j] = station_info[i];
-        station_info[i] = tmp;
-      }
-    }
-  }
+  sort_station_info(station_info);
 
   for (int i = 0; i < shm->config.nof_workers; i++) {
-    int target_station = -1;
-
-    if (i < 4) {
-      target_station = station_info[i].station_id;
-      station_info[i].curr_assignement++;
-    } else {
-      int best = -1;
-      for (int j = 0; j < 4; j++) {
-        if (station_info[j].curr_assignement >= station_info[j].max_assignement)
-          continue;
-        if (best == -1 || station_info[j].station_avg_srvc *
-                                  station_info[best].curr_assignement >
-                              station_info[best].station_avg_srvc *
-                                  station_info[j].curr_assignement) {
-          best = j;
-        }
-      }
-      if (best == -1) {
-        fprintf(stderr, "WARNING: worker %d not assigned, all stations full\n",
-                i);
-        continue;
-      }
-      target_station = station_info[best].station_id;
-      station_info[best].curr_assignement++;
+    int target_station = get_target_station(station_info, i);
+    if (target_station != -1) {
+      operators[i] = spawn_operator(target_station);
     }
-
-    pid_t pid = fork();
-    if (pid == -1) {
-      perror("FORK FAILED");
-      exit(EXIT_FAILURE);
-    }
-
-    if (pid == 0) {
-      char shm_str[ARGC_MAX_LENGHT], sem_str[ARGC_MAX_LENGHT],
-          msg_str[ARGC_MAX_LENGHT], target_station_str[ARGC_MAX_LENGHT];
-      snprintf(shm_str, sizeof(shm_str), "%d", shm_id);
-      snprintf(sem_str, sizeof(sem_str), "%d", sem_id);
-      snprintf(msg_str, sizeof(msg_str), "%d", msg_id);
-      snprintf(target_station_str, sizeof(target_station_str), "%d",
-               target_station);
-
-      if (target_station == STATION_CASSA) {
-        execl(OPERATOR_CASSA_PATH, "operatore_cassa", shm_str, sem_str, msg_str,
-              target_station_str, (char *)NULL);
-      } else {
-        execl(OPERATOR_PATH, "operatore", shm_str, sem_str, msg_str,
-              target_station_str, (char *)NULL);
-      }
-      perror("EXEC FAILED");
-      exit(EXIT_FAILURE);
-    }
-
-    operators[i] = pid;
   }
 }
+
+static void initialize_users() {}
 
 int main(int argc, char *argv[]) {
   (void)argc;
@@ -253,12 +217,23 @@ int main(int argc, char *argv[]) {
 
   parse_config((argc > 1) ? argv[1] : NULL, &shm->config);
 
+  if (read_menu_file(shm->config.menu_file) == -1) {
+    perror("ERROR OPENING MENU FILE");
+    exit(EXIT_FAILURE);
+  }
+
   initialize_sem();
 
   msg_id = create_message_queue();
 
-  if (read_menu_file(shm->config.menu_file) == -1) {
-    perror("ERROR OPENING MENU FILE");
+  operators = malloc(shm->config.nof_workers * sizeof(pid_t));
+  if (operators == NULL) {
+    perror("ERRROR MALLOC OPERATORS");
+    exit(EXIT_FAILURE);
+  }
+  users = malloc(shm->config.nof_users * sizeof(pid_t));
+  if (users == NULL) {
+    perror("ERRROR MALLOC USERS");
     exit(EXIT_FAILURE);
   }
 
