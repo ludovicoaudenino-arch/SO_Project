@@ -1016,7 +1016,7 @@ make clean && make
 - [v] `operatore.c`: attach shared memory, setup signal handler
 - [v] Segnalazione "pronto" al responsabile (barriera)
 - [v] Attesa inizio giornata
-- [ ] Competizione per il posto alla stazione (semaforo)
+- [v] Competizione per il posto alla stazione (semaforo)
 - [ ] Loop di servizio: ricezione messaggio, simulazione tempo, risposta
 - [ ] Decremento porzioni (primi/secondi) con mutex
 - [ ] Gestione piatto esaurito → risposta "esaurito"

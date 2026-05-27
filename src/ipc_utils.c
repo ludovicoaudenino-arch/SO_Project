@@ -1,4 +1,6 @@
 #include "ipc_utils.h"
+#include <asm-generic/errno-base.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ipc.h>
@@ -137,11 +139,15 @@ void send_message(int mqid, void *msg, size_t size, int flags) {
   }
 }
 
-void receive_message(int mqid, void *msg, size_t size, long mtype, int flags) {
+int receive_message(int mqid, void *msg, size_t size, long mtype, int flags) {
   if (msgrcv(mqid, msg, size, mtype, flags) == -1) {
+    if (errno == EINTR) {
+      return -1;
+    }
     perror("ERROR RECIVING MESSAGE");
     exit(EXIT_FAILURE);
   }
+  return 0;
 }
 
 void remove_message_queue(int mqid) {

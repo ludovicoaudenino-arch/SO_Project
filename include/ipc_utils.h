@@ -120,7 +120,7 @@ void send_message(int mqid, void *msg, size_t size, int flags);
  * specific type).
  * @param flags The operation flags (e.g., 0, IPC_NOWAIT).
  */
-void receive_message(int mqid, void *msg, size_t size, long mtype, int flags);
+int receive_message(int mqid, void *msg, size_t size, long mtype, int flags);
 
 /**
  * @brief Removes a message queue from the system.
