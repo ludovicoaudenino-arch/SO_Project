@@ -34,12 +34,12 @@ static int msg_id = -1;
 static struct SharedData *shm = NULL;
 static pid_t *operators = NULL;
 static pid_t *users = NULL;
-struct StationInfo {
+typedef struct {
   int station_id;
   int station_avg_srvc;
   int curr_assignement;
   int max_assignement;
-};
+} StationInfo;
 
 /**
  * @brief Releases all IPC resources and dynamic memory at process exit.
@@ -111,9 +111,9 @@ static void handle_signal(int sig) {
 static void set_exit() {
   atexit(cleanup_ipc);
 
-  struct sigaction sa;
-  memset(&sa, 0, sizeof(sa));
+  struct sigaction sa = {0};
   sa.sa_handler = handle_signal;
+  sigemptyset(&sa.sa_mask);
   sigaction(SIGINT, &sa, NULL);
 }
 
@@ -198,11 +198,11 @@ static int read_menu_file(const char *path) {
  *
  * @param station_info Array of NUM_STATIONS StationInfo structs to sort.
  */
-static void sort_station_info(struct StationInfo station_info[]) {
+static void sort_station_info(StationInfo station_info[]) {
   for (int i = 0; i < 3; i++) {
     for (int j = i + 1; j < 4; j++) {
       if (station_info[i].station_avg_srvc < station_info[j].station_avg_srvc) {
-        struct StationInfo tmp = station_info[j];
+        StationInfo tmp = station_info[j];
         station_info[j] = station_info[i];
         station_info[i] = tmp;
       }
@@ -221,7 +221,7 @@ static void sort_station_info(struct StationInfo station_info[]) {
  * @param index Zero-based index of the operator being assigned.
  * @return Station ID on success, -1 if all stations are at capacity.
  */
-static int get_target_station(struct StationInfo station_info[], int index) {
+static int get_target_station(StationInfo station_info[], int index) {
   int target_station = -1;
 
   if (index < 4) {
@@ -274,14 +274,8 @@ static pid_t spawn_operator(int target_station) {
     snprintf(msg_str, sizeof(msg_str), "%d", msg_id);
     snprintf(target_station_str, sizeof(target_station_str), "%d",
              target_station);
-
-    if (target_station == STATION_CASSA) {
-      execl(OPERATOR_CASSA_PATH, "operatore_cassa", shm_str, sem_str, msg_str,
-            target_station_str, (char *)NULL);
-    } else {
-      execl(OPERATOR_PATH, "operatore", shm_str, sem_str, msg_str,
-            target_station_str, (char *)NULL);
-    }
+    execl(OPERATOR_PATH, "operatore", shm_str, sem_str, msg_str,
+          target_station_str, (char *)NULL);
     perror("EXEC FAILED");
     exit(EXIT_FAILURE);
   }
@@ -325,23 +319,20 @@ static pid_t spawn_user() {
  * station via get_target_station().
  */
 static void initialize_operators() {
-  struct StationInfo station_info[4] = {
-      {STATION_PRIMI, shm->config.avg_srvc_primi, 0,
-       shm->config.nof_wk_seats_primi},
-      {STATION_SECONDI, shm->config.avg_srvc_secondi, 0,
-       shm->config.nof_wk_seats_secondi},
-      {STATION_COFFEE, shm->config.avg_srvc_coffee, 0,
-       shm->config.nof_wk_seats_coffee},
-      {STATION_CASSA, shm->config.avg_srvc_cassa, 0,
-       shm->config.nof_wk_seats_cassa}};
+  StationInfo station_info[4] = {{STATION_PRIMI, shm->config.avg_srvc_primi, 0,
+                                  shm->config.nof_wk_seats_primi},
+                                 {STATION_SECONDI, shm->config.avg_srvc_secondi,
+                                  0, shm->config.nof_wk_seats_secondi},
+                                 {STATION_COFFEE, shm->config.avg_srvc_coffee,
+                                  0, shm->config.nof_wk_seats_coffee},
+                                 {STATION_CASSA, shm->config.avg_srvc_cassa, 0,
+                                  shm->config.nof_wk_seats_cassa}};
 
   sort_station_info(station_info);
 
   for (int i = 0; i < shm->config.nof_workers; i++) {
     int target_station = get_target_station(station_info, i);
-    if (target_station != -1) {
-      operators[i] = spawn_operator(target_station);
-    }
+    operators[i] = spawn_operator(target_station);
   }
 }
 
