@@ -62,6 +62,19 @@ struct SharedData {
   int table_seats_free; /**< @brief Number of free seats at the dining tables */
   /** @} */
 
+  /** @name Message Queues */
+  /** @{ */
+  int msg_queue_requests[4]; /**< @brief Request message queues for Primi, Secondi, Coffee, Cassa */
+  int msg_queue_served;      /**< @brief Shared response message queue (served) */
+  /** @} */
+
+  /** @name Semaphores */
+  /** @{ */
+  int sem_id;                /**< @brief System V semaphore set ID */
+  /** @} */
+
+
+
   /** @name Statistics and Configuration */
   /** @{ */
   SimStats sim_stats; /**< @brief Aggregate simulation statistics (daily and cumulative) */

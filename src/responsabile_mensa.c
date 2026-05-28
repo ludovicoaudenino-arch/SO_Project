@@ -28,9 +28,11 @@
 #define TOTAL_CHILDREN ((shm->config.nof_workers) + (shm->config.nof_users))
 #define SIM_DAY_SECOND (8 * 60 * 60)
 
+extern char **environ;
+
 static int shm_id = -1;
 static int sem_id = -1;
-static int msg_id = -1;
+static int msg_queues[5] = {-1, -1, -1, -1, -1};
 static struct SharedData *shm = NULL;
 static pid_t *operators = NULL;
 static pid_t *users = NULL;
@@ -58,8 +60,10 @@ static void cleanup_ipc() {
   if (sem_id != -1) {
     remove_semaphores(sem_id);
   }
-  if (msg_id != -1) {
-    remove_message_queue(msg_id);
+  for (int i = 0; i < 5; i++) {
+    if (msg_queues[i] != -1) {
+      remove_message_queue(msg_queues[i]);
+    }
   }
   if (operators != NULL) {
     free(operators);
@@ -267,15 +271,12 @@ static pid_t spawn_operator(int target_station) {
   }
 
   if (pid == 0) {
-    char shm_str[ARGC_MAX_LENGTH], sem_str[ARGC_MAX_LENGTH],
-        msg_str[ARGC_MAX_LENGTH], target_station_str[ARGC_MAX_LENGTH];
+    char shm_str[ARGC_MAX_LENGTH], target_station_str[ARGC_MAX_LENGTH];
     snprintf(shm_str, sizeof(shm_str), "%d", shm_id);
-    snprintf(sem_str, sizeof(sem_str), "%d", sem_id);
-    snprintf(msg_str, sizeof(msg_str), "%d", msg_id);
     snprintf(target_station_str, sizeof(target_station_str), "%d",
              target_station);
-    execl(OPERATOR_PATH, "operatore", shm_str, sem_str, msg_str,
-          target_station_str, (char *)NULL);
+    char *const child_argv[] = {"operatore", shm_str, target_station_str, NULL};
+    execve(OPERATOR_PATH, child_argv, environ);
     perror("EXEC FAILED");
     exit(EXIT_FAILURE);
   }
@@ -298,12 +299,10 @@ static pid_t spawn_user() {
     exit(EXIT_FAILURE);
   }
   if (pid == 0) {
-    char shm_str[ARGC_MAX_LENGTH], sem_str[ARGC_MAX_LENGTH],
-        msg_str[ARGC_MAX_LENGTH];
+    char shm_str[ARGC_MAX_LENGTH];
     snprintf(shm_str, sizeof(shm_str), "%d", shm_id);
-    snprintf(sem_str, sizeof(sem_str), "%d", sem_id);
-    snprintf(msg_str, sizeof(msg_str), "%d", msg_id);
-    execl(USER_PATH, "utente", shm_str, sem_str, msg_str, NULL);
+    char *const child_argv[] = {"utente", shm_str, NULL};
+    execve(USER_PATH, child_argv, environ);
     perror("EXEC FAILED");
     exit(EXIT_FAILURE);
   }
@@ -364,8 +363,14 @@ int main(int argc, char *argv[]) {
   }
 
   initialize_sem();
+  shm->sem_id = sem_id;
 
-  msg_id = create_message_queue();
+  for (int i = 0; i < 4; i++) {
+    msg_queues[i] = create_message_queue();
+    shm->msg_queue_requests[i] = msg_queues[i];
+  }
+  msg_queues[4] = create_message_queue();
+  shm->msg_queue_served = msg_queues[4];
 
   /* --- Phase 3: Allocate PID arrays and spawn child processes --- */
   operators = malloc(shm->config.nof_workers * sizeof(pid_t));

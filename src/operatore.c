@@ -47,8 +47,6 @@ typedef struct {
 } JollyMsg;
 
 static int shm_id;
-static int sem_id;
-static int msg_id;
 static int target_station;
 volatile sig_atomic_t should_exit = 0;
 static StationProperties station_prop;
@@ -65,14 +63,12 @@ static void set_sigaction() {
 }
 
 static void parse_arguments(int argc, char *argv[]) {
-  if (argc < 5) {
+  if (argc < 3) {
     perror("NOT ENOUGH ARG");
     exit(EXIT_FAILURE);
   }
-  int *arg[4] = {&shm_id, &sem_id, &msg_id, &target_station};
-  for (int i = 1; i < argc; i++) {
-    *arg[i - 1] = atoi(argv[i]);
-  }
+  shm_id = atoi(argv[1]);
+  target_station = atoi(argv[2]);
 }
 
 static void set_StationProperties(struct SharedData *shm) {
@@ -105,6 +101,7 @@ static void set_StationProperties(struct SharedData *shm) {
 }
 
 static void serve_primi_secondi(struct SharedData *shm, ServingMsg *order) {
+  int sem_id = shm->sem_id;
   int dish_type = order->dish_type;
   int served = 0;
   int portion_mutex =
@@ -133,15 +130,16 @@ static void serve_primi_secondi(struct SharedData *shm, ServingMsg *order) {
   ServingMsg reply;
   reply.mytype = order->pid;
   reply.served = served;
-  send_message(msg_id, &reply, MSG_CONTENT_SIZE(ServingMsg), 0);
+  send_message(shm->msg_queue_served, &reply, MSG_CONTENT_SIZE(ServingMsg), 0);
 }
 
 static void serve_caffe(struct SharedData *shm, ServingMsg *order) {
+  int sem_id = shm->sem_id;
   ServingMsg reply;
   reply.mytype = order->pid;
   reply.served = 1;
 
-  send_message(msg_id, &reply, MSG_CONTENT_SIZE(ServingMsg), 0);
+  send_message(shm->msg_queue_served, &reply, MSG_CONTENT_SIZE(ServingMsg), 0);
   sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
   shm->sim_stats.dishes_coffee_today++;
   sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
@@ -152,7 +150,7 @@ static void serve_cassa(struct SharedData *shm, ServingMsg *order) {}
 static void handle_jolly_assignment(struct SharedData *shm) {
   if (target_station == -1) {
     JollyMsg jolly_msg;
-    receive_message(msg_id, &jolly_msg, MSG_CONTENT_SIZE(JollyMsg),
+    receive_message(shm->msg_queue_served, &jolly_msg, MSG_CONTENT_SIZE(JollyMsg),
                     JOLLY_MSG_TYPE, 0);
     target_station = jolly_msg.station_id;
     set_StationProperties(shm);
@@ -162,7 +160,7 @@ static void handle_jolly_assignment(struct SharedData *shm) {
 static void run_workday(struct SharedData *shm) {
   while (shm->day_running) {
     ServingMsg order;
-    receive_message(msg_id, &order, MSG_CONTENT_SIZE(ServingMsg),
+    receive_message(shm->msg_queue_requests[target_station], &order, MSG_CONTENT_SIZE(ServingMsg),
                     station_prop.msg_type, 0);
     int service_time =
         random_service_time(station_prop.avg_srvc, station_prop.srvc_delta);
@@ -185,6 +183,7 @@ int main(int argc, char *argv[]) {
   parse_arguments(argc, argv);
 
   struct SharedData *shm = attach_shared_memory(shm_id);
+  int sem_id = shm->sem_id;
 
   set_StationProperties(shm);
 
