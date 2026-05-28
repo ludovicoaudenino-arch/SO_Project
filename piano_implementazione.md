@@ -64,8 +64,9 @@ SO_Project/
 │   └── common.h          # costanti comuni, macro, include di sistema
 ├── src/
 │   ├── responsabile_mensa.c   # processo padre / coordinatore
-│   ├── operatore.c            # processo operatore stazione cibo
-│   ├── operatore_cassa.c      # processo cassiere
+│   ├── operatore.c            # processo operatore stazione cibo (opzionale)
+│   ├── operatore_cassa.c      # processo cassiere (opzionale)
+│   ├── stazione.c             # [NUOVO] processo unificato / manager di stazione
 │   ├── utente.c               # processo utente
 │   ├── config.c               # implementazione parsing configurazione
 │   ├── ipc_utils.c            # implementazione utility IPC
@@ -89,9 +90,10 @@ SO_Project/
 | Eseguibile            | Sorgente principale          | Descrizione                          |
 |-----------------------|------------------------------|--------------------------------------|
 | `responsabile_mensa`  | `responsabile_mensa.c`       | Coordinatore / main della simulazione |
-| `operatore`           | `operatore.c`                | Operatore generico stazione cibo     |
-| `operatore_cassa`     | `operatore_cassa.c`          | Cassiere                             |
 | `utente`              | `utente.c`                   | Processo utente                      |
+| `stazione`            | `stazione.c`                 | [Alternativa] Lavoratore stazione / cassa unificato |
+| `operatore`           | `operatore.c`                | [Alternativa] Operatore generico cibo |
+| `operatore_cassa`     | `operatore_cassa.c`          | [Alternativa] Cassiere               |
 
 ---
 
@@ -431,7 +433,27 @@ All'inizio di ogni giornata il responsabile_mensa:
 
 1. Ordina le stazioni per `AVG_SRVC_*` decrescente.
 2. Assegna 1 operatore a ciascuna delle 4 stazioni.
-3. Distribuisce i restanti per priorità, rispettando `NOF_WK_SEATS_*`.
+3. Distribuisci i restanti per priorità, rispettando `NOF_WK_SEATS_*`.
+
+### 6.5 Alternativa di Design: Stazione come Processo Autonomo (stazione.c)
+
+Nel piano d'azione originale abbiamo considerato le stazioni come entità puramente logiche gestite tramite risorse IPC (semafori e code di messaggi) su cui operano direttamente i processi dei singoli lavoratori (`operatore.c` e `operatore_cassa.c`).
+
+Tuttavia, esiste l'opportunità di implementare un processo dedicato alle stazioni tramite un sorgente **`stazione.c`** (che compila nell'eseguibile `./bin/stazione`). Questa opzione apre la strada a due eccezionali varianti architetturali:
+
+#### Variante B1: Processo Unificato "Lavoratore di Stazione" (Consolidamento)
+Invece di compilare due file separati `operatore.c` and `operatore_cassa.c`, implementiamo un unico sorgente `stazione.c`.
+- Ciascun operatore o cassiere è un processo che esegue `./bin/stazione`.
+- All'avvio, il processo riceve come argomento il tipo di stazione assegnata (`0` per primi, `1` per secondi, `2` per coffee, `3` per cassa).
+- Il codice di `stazione.c` adotta dinamicamente la logica corretta: esegue la competizione per la postazione corretta, gestisce le porzioni (se cibo) o il calcolo del conto (se cassa).
+- **Perché sceglierlo:** Semplifica notevolmente il Makefile, unifica la gestione dei segnali (SIGUSR1 per fine giornata) e azzera la duplicazione di codice per l'attesa del broadcast di inizio giornata.
+
+#### Variante B2: Processo "Manager di Stazione" + Thread Operatori
+Il responsabile mensa avvia esattamente 4 processi `./bin/stazione` (uno per Primi, uno per Secondi, uno per Coffee, uno per Cassa).
+- Ciascun processo stazione gestisce in modo centralizzato la propria coda di messaggi, leggendo le richieste degli utenti e coordinando l'erogazione.
+- Le postazioni di lavoro (`seats`) all'interno di ciascuna stazione sono gestite tramite **thread concorrenti** (`pthread_create`) interni al processo della stazione stessa.
+- Gli operatori sono quindi modellati come thread all'interno del processo stazione, semplificando la sincronizzazione delle pause e la gestione della memoria locale.
+- **Perché sceglierlo:** Altamente aderente all'astrazione ad oggetti e modulare, riduce drasticamente il numero totale di processi pesanti attivi nel sistema operativo.
 
 ---
 
@@ -834,34 +856,40 @@ COMMON_OBJS = $(BUILD_DIR)/config.o $(BUILD_DIR)/ipc_utils.o \
 
 # Eseguibili
 TARGETS = $(BIN_DIR)/responsabile_mensa \
-          $(BIN_DIR)/operatore \
-          $(BIN_DIR)/operatore_cassa \
+          $(BIN_DIR)/stazione \
           $(BIN_DIR)/utente
 
-all: dirs $(TARGETS)
+# Target alternativi (se si usano eseguibili separati per gli operatori)
+TARGETS_ALT = $(BIN_DIR)/operatore \
+              $(BIN_DIR)/operatore_cassa
+
+all: dirs $(TARGETS) $(TARGETS_ALT)
 
 dirs:
- @mkdir -p $(BUILD_DIR) $(BIN_DIR)
+	@mkdir -p $(BUILD_DIR) $(BIN_DIR)
 
 # Regola generica per .c → .o
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
- $(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # Eseguibili (ciascuno linka i propri .o + i moduli comuni)
 $(BIN_DIR)/responsabile_mensa: $(BUILD_DIR)/responsabile_mensa.o $(COMMON_OBJS)
- $(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BIN_DIR)/stazione: $(BUILD_DIR)/stazione.o $(COMMON_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BIN_DIR)/operatore: $(BUILD_DIR)/operatore.o $(COMMON_OBJS)
- $(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BIN_DIR)/operatore_cassa: $(BUILD_DIR)/operatore_cassa.o $(COMMON_OBJS)
- $(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BIN_DIR)/utente: $(BUILD_DIR)/utente.o $(COMMON_OBJS)
- $(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 clean:
- rm -rf $(BUILD_DIR)/*.o $(BIN_DIR)/*
+	rm -rf $(BUILD_DIR)/*.o $(BIN_DIR)/*
 
 .PHONY: all clean dirs
 ```
@@ -1017,10 +1045,10 @@ make clean && make
 - [v] Segnalazione "pronto" al responsabile (barriera)
 - [v] Attesa inizio giornata
 - [v] Competizione per il posto alla stazione (semaforo)
-- [ ] Loop di servizio: ricezione messaggio, simulazione tempo, risposta
-- [ ] Decremento porzioni (primi/secondi) con mutex
-- [ ] Gestione piatto esaurito → risposta "esaurito"
-- [ ] Fine giornata → rilascio posto
+- [v] Loop di servizio: ricezione messaggio, simulazione tempo, risposta
+- [v] Decremento porzioni (primi/secondi) con mutex
+- [v] Gestione piatto esaurito → risposta "esaurito"
+- [v] Fine giornata → rilascio posto
 - [ ] Verificare: con un utente e un operatore, il flusso funziona
 
 ### Fase 3: Operatore cassa (1-2 giorni)

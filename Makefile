@@ -13,7 +13,6 @@ COMMON_OBJS = $(BUILD_DIR)/config.o $(BUILD_DIR)/ipc_utils.o \
 # Executables
 TARGETS = $(BIN_DIR)/responsabile_mensa \
           $(BIN_DIR)/operatore \
-          $(BIN_DIR)/operatore_cassa \
           $(BIN_DIR)/utente
 
 all: dirs $(TARGETS)
@@ -32,8 +31,6 @@ $(BIN_DIR)/responsabile_mensa: $(BUILD_DIR)/responsabile_mensa.o $(COMMON_OBJS)
 $(BIN_DIR)/operatore: $(BUILD_DIR)/operatore.o $(COMMON_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-$(BIN_DIR)/operatore_cassa: $(BUILD_DIR)/operatore_cassa.o $(COMMON_OBJS)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BIN_DIR)/utente: $(BUILD_DIR)/utente.o $(COMMON_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)

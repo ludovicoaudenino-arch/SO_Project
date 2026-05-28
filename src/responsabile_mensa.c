@@ -18,10 +18,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sem.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define OPERATOR_CASSA_PATH "./bin/operatore_cassa"
 #define OPERATOR_PATH "./bin/operatore"
 #define USER_PATH "./bin/utente"
 #define ARGC_MAX_LENGTH 16
@@ -254,7 +254,7 @@ static int get_target_station(StationInfo station_info[], int index) {
  * @brief Forks and execs an operator process for the given station.
  *
  * Passes IPC identifiers (shm_id, sem_id, msg_id) and the target station
- * as command-line arguments. Cashier operators use a separate executable.
+ * as command-line arguments.
  *
  * @param target_station Station ID to assign (STATION_PRIMI, etc.).
  * @return PID of the spawned child process.
@@ -392,7 +392,7 @@ int main(int argc, char *argv[]) {
     sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN, 0);
 
     /* Prepare the new day state under mutex protection */
-    sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
+    sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     shm->current_day = current_day;
     shm->day_running = 1;
     for (int j = 0; j < shm->nof_type_primi; j++) {
@@ -401,7 +401,7 @@ int main(int argc, char *argv[]) {
     for (int j = 0; j < shm->nof_type_secondi; j++) {
       shm->portion_left_secondi[j] = shm->config.avg_refill_secondi;
     }
-    sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
+    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
     /* Broadcast day start: unblock all children simultaneously */
     sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN, 0);
@@ -409,15 +409,15 @@ int main(int argc, char *argv[]) {
     /* Let the simulated workday elapse (8 hours) */
     sim_sleep(SIM_DAY_SECOND, shm->config.n_nano_secs);
     /* Signal end of service for this day */
-    sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
+    sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     shm->day_running = 0;
-    sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
+    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
   }
 
   /* --- Phase 5: Graceful shutdown --- */
-  sem_op(sem_id, SEM_MUTEX_SHM, -1, 0);
+  sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
   shm->simulation_running = 0;
-  sem_op(sem_id, SEM_MUTEX_SHM, +1, 0);
+  sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
   /* Reap all child processes before IPC cleanup runs via atexit */
   wait_for_children();
