@@ -16,7 +16,7 @@
 #define ORDER_SECONDI_TYPE 2
 #define ORDER_COFFEE_TYPE 3
 #define ORDER_CASSA_TYPE 4
-#define MSG_CONTENT_SIZE (sizeof(((Msg *)0)->content))
+#define MSG_CONTENT_SIZE(msg_struct) (sizeof(msg_struct) - sizeof(long))
 
 typedef struct {
   int avg_srvc;
@@ -27,14 +27,15 @@ typedef struct {
 
 typedef struct {
   long mytype;
+  int dish_type;
+  int served;
+  pid_t pid;
+} ServingMsg;
 
-  union {
-    int station_id;
-    int dish_type;
-    int served;
-    pid_t pid;
-  } content;
-} Msg;
+typedef struct {
+  long mytype;
+  int station_id;
+} JollyMsg;
 
 static int shm_id;
 static int sem_id;
@@ -111,9 +112,10 @@ int main(int argc, char *argv[]) {
     sem_op(sem_id, SEM_DAY_START, -1, 0);
 
     if (target_station == -1) {
-      Msg jolly_msg;
-      receive_message(msg_id, &jolly_msg, MSG_CONTENT_SIZE, JOLLY_MSG_TYPE, 0);
-      target_station = jolly_msg.content.station_id;
+      JollyMsg jolly_msg;
+      receive_message(msg_id, &jolly_msg, MSG_CONTENT_SIZE(JollyMsg),
+                      JOLLY_MSG_TYPE, 0);
+      target_station = jolly_msg.station_id;
       set_StationProperties(shm);
     }
     if (target_station >= 0 && target_station <= 3) {
@@ -122,15 +124,15 @@ int main(int argc, char *argv[]) {
     }
 
     while (shm->day_running) {
-      Msg order;
-      receive_message(msg_id, &order, MSG_CONTENT_SIZE, station_prop.msg_type,
-                      0);
+      ServingMsg order;
+      receive_message(msg_id, &order, MSG_CONTENT_SIZE(ServingMsg),
+                      station_prop.msg_type, 0);
       int service_time =
           random_service_time(station_prop.avg_srvc, station_prop.srvc_delta);
       sim_sleep(service_time, shm->config.n_nano_secs);
 
       if (target_station == 0 || target_station == 1) {
-        int dish_type = order.content.dish_type;
+        int dish_type = order.dish_type;
         int served = 0;
         int portion_mutex =
             (target_station == 0) ? SEM_MUTEX_PORZIONI_P : SEM_MUTEX_PORZIONI_S;
@@ -155,16 +157,16 @@ int main(int argc, char *argv[]) {
         }
         sem_op(sem_id, portion_mutex, +1, SEM_UNDO);
 
-        Msg reply;
-        reply.mytype = order.content.pid;
-        reply.content.served = served;
-        send_message(msg_id, &reply, MSG_CONTENT_SIZE, 0);
+        ServingMsg reply;
+        reply.mytype = order.pid;
+        reply.served = served;
+        send_message(msg_id, &reply, MSG_CONTENT_SIZE(ServingMsg), 0);
       } else if (target_station == 2) {
-        Msg reply;
-        reply.mytype = order.content.pid;
-        reply.content.served = 1;
+        ServingMsg reply;
+        reply.mytype = order.pid;
+        reply.served = 1;
 
-        send_message(msg_id, &reply, MSG_CONTENT_SIZE, 0);
+        send_message(msg_id, &reply, MSG_CONTENT_SIZE(ServingMsg), 0);
         sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
         shm->sim_stats.dishes_coffee_today++;
         sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);

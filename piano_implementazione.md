@@ -1049,7 +1049,7 @@ make clean && make
 - [v] Decremento porzioni (primi/secondi) con mutex
 - [v] Gestione piatto esaurito → risposta "esaurito"
 - [v] Fine giornata → rilascio posto
-- [ ] Verificare: con un utente e un operatore, il flusso funziona
+- [v] Verificare: con un utente e un operatore, il flusso funziona
 
 ### Fase 3: Operatore cassa (1-2 giorni)
 
