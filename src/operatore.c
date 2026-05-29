@@ -10,8 +10,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/sem.h>
+#include <unistd.h>
 
 static int shm_id;
+static int sem_id;
+static int msg_id[NUM_QUEUES];
 static int target_station;
 volatile sig_atomic_t should_exit = 0;
 
@@ -65,7 +68,9 @@ static void serve_primi_secondi(struct SharedData *shm, ServingMsg *order) {
   ServedMsg reply;
   reply.mytype = order->pid;
   reply.served = served;
-  send_message(shm->msg_queue_served, &reply, MSG_CONTENT_SIZE(ServingMsg), 0);
+  reply.pid = getpid();
+  send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
+               MSG_CONTENT_SIZE(ServedMsg), 0);
 }
 
 static void serve_caffe(struct SharedData *shm, ServingMsg *order) {
@@ -73,22 +78,41 @@ static void serve_caffe(struct SharedData *shm, ServingMsg *order) {
   ServedMsg reply;
   reply.mytype = order->pid;
   reply.served = 1;
+  reply.pid = getpid();
 
-  send_message(shm->msg_queue_served, &reply, MSG_CONTENT_SIZE(ServingMsg), 0);
+  send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
+               MSG_CONTENT_SIZE(ServedMsg), 0);
   sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
   shm->sim_stats.dishes_coffee_today++;
   sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
 }
 
-static void serve_cassa(struct SharedData *shm, ServingMsg *order) {
-  (void)shm;
-  (void)order;
+static void serve_cassa(struct SharedData *shm, OrderMsg *order) {
+  int sem_id = shm->sem_id;
+
+  float total_primi_price = order->primi_ordered * shm->config.price_primi;
+  float total_secondi_price =
+      order->secondi_ordered * shm->config.price_secondi;
+  float total_coffee_price = order->coffee_ordered * shm->config.price_coffee;
+
+  float total = total_primi_price + total_secondi_price + total_coffee_price;
+
+  sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
+  shm->sim_stats.revenue_today += total;
+  sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
+
+  ServedMsg reply;
+  reply.mytype = order->pid;
+  reply.served = 1;
+  reply.pid = getpid();
+  send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
+               MSG_CONTENT_SIZE(ServedMsg), 0);
 }
 
 static void handle_jolly_assignment(struct SharedData *shm) {
   if (target_station == -1) {
     StationMsg jolly_msg;
-    receive_message(shm->msg_queue_served, &jolly_msg,
+    receive_message(shm->msg_queue_list[NUM_QUEUES - 1], &jolly_msg,
                     MSG_CONTENT_SIZE(StationMsg), JOLLY_MSG_TYPE, 0);
     target_station = jolly_msg.station_id;
   }
@@ -96,21 +120,29 @@ static void handle_jolly_assignment(struct SharedData *shm) {
 
 static void run_workday(struct SharedData *shm) {
   while (shm->day_running) {
-    ServingMsg order;
-    receive_message(shm->msg_queue_requests[target_station], &order,
-                    MSG_CONTENT_SIZE(ServingMsg),
-                    shm->stations[target_station].msg_type, 0);
     int service_time =
         random_service_time(shm->stations[target_station].avg_srvc,
                             shm->stations[target_station].srvc_delta);
-    sim_sleep(service_time, shm->config.n_nano_secs);
 
-    if (target_station == 0 || target_station == 1) {
-      serve_primi_secondi(shm, &order);
-    } else if (target_station == 2) {
-      serve_caffe(shm, &order);
-    } else if (target_station == 3) {
+    if (target_station == STATION_CASSA) {
+      OrderMsg order;
+      receive_message(shm->msg_queue_list[target_station], &order,
+                      MSG_CONTENT_SIZE(OrderMsg),
+                      shm->stations[target_station].msg_type, 0);
+      sim_sleep(service_time, shm->config.n_nano_secs);
       serve_cassa(shm, &order);
+    } else {
+      ServingMsg order;
+      receive_message(shm->msg_queue_list[target_station], &order,
+                      MSG_CONTENT_SIZE(ServingMsg),
+                      shm->stations[target_station].msg_type, 0);
+      sim_sleep(service_time, shm->config.n_nano_secs);
+      if (target_station == STATION_PRIMI ||
+          target_station == STATION_SECONDI) {
+        serve_primi_secondi(shm, &order);
+      } else if (target_station == STATION_COFFEE) {
+        serve_caffe(shm, &order);
+      }
     }
   }
 }
@@ -122,7 +154,6 @@ int main(int argc, char *argv[]) {
   parse_arguments(argc, argv);
 
   struct SharedData *shm = attach_shared_memory(shm_id);
-  int sem_id = shm->sem_id;
 
   set_sigaction();
 

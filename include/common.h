@@ -1,7 +1,28 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+/**
+ * @file common.h
+ * @brief Global constants, identifiers, and macros for the Cafeteria simulation.
+ *
+ * This file contains definitions shared across all processes,
+ * including data structure limits, station indices,
+ * and identifiers for the System V IPC components.
+ */
+
 #include <sys/types.h>
+
+/* ========================================================================== */
+/*                          MESSAGE QUEUE CONFIGURATION                       */
+/* ========================================================================== */
+
+/**
+ * @name Message Queue Configuration
+ * Global constraints on the number of active message queues.
+ * @{
+ */
+#define NUM_QUEUES 5                     /**< @brief Total number of message queues (4 station queues + 1 response queue) */
+/** @} */
 
 /**
  * @name Message Type Identifiers
@@ -20,43 +41,37 @@
  */
 #define MSG_CONTENT_SIZE(msg_struct) (sizeof(msg_struct) - sizeof(long))
 
+/* --- Message Queue Payload Structures --- */
+
 /**
  * @struct ServingMsg
- * @brief Represents a request for a single dish (Primi or Secondi) at a food
- * station.
+ * @brief Represents a request for a single dish (Primi or Secondi) at a food station.
  *
  * Sent by users (utente) to a specific station's request queue.
  */
 typedef struct {
-  long mytype;   /**< @brief Message type (used for routing or filter, must be >
-                    0) */
-  int dish_type; /**< @brief Index of the dish variant requested (0 to
-                    MAX_DISH_TYPES - 1) */
-  pid_t pid;     /**< @brief Process ID of the requesting user (utente) */
+  long mytype;    /**< @brief Message type (used for routing or filter, must be > 0) */
+  int dish_type;  /**< @brief Index of the dish variant requested (0 to MAX_DISH_TYPES - 1) */
+  pid_t pid;      /**< @brief Process ID of the requesting user (utente) */
 } ServingMsg;
 
 /**
  * @struct ServedMsg
- * @brief Represents the reply indicating whether a user was successfully
- * served.
+ * @brief Represents the reply indicating whether a user was successfully served.
  *
- * Sent by operators to the common served message queue, addressed to the user's
- * PID.
+ * Sent by operators to the common served message queue, addressed to the user's PID.
  */
 typedef struct {
-  long mytype; /**< @brief Message type (set to the target user's PID for
-                  routing) */
-  int served; /**< @brief Service outcome (1 if successfully served, 0 if out of
-                 portions/failed) */
-  pid_t pid;  /**< @brief Process ID of the operator that handled the request */
+  long mytype;    /**< @brief Message type (set to the target user's PID for routing) */
+  int served;     /**< @brief Service outcome (1 if successfully served, 0 if out of portions/failed) */
+  pid_t pid;      /**< @brief Process ID of the operator that handled the request */
 } ServedMsg;
 
 /**
  * @struct OrderMsg
  * @brief Represents the checkout summary sent to the cashier (Cassa) station.
  *
- * Sent by users (utente) to the cashier station to record consumption and
- * compute payments.
+ * Sent by users (utente) to the cashier station to record consumption and compute payments.
  */
 typedef struct {
   long mytype;         /**< @brief Message type (must be > 0) */
@@ -68,45 +83,19 @@ typedef struct {
 
 /**
  * @struct StationMsg
- * @brief Represents a dynamic station reassignment message sent to a Jolly
- * operator.
+ * @brief Represents a dynamic station reassignment message sent to a Jolly operator.
  *
- * Sent by the manager (responsabile_mensa) to route a wildcard worker to an
- * overloaded station.
+ * Sent by the manager (responsabile_mensa) to route a wildcard worker to an overloaded station.
  */
 typedef struct {
   long mytype;    /**< @brief Message type (set to JOLLY_MSG_TYPE) */
-  int station_id; /**< @brief Index of the target station to relocate to
-                     (STATION_*) */
+  int station_id; /**< @brief Index of the target station to relocate to (STATION_*) */
 } StationMsg;
 
-/**
- * @file common.h
- * @brief Global constants, identifiers, and macros for the Cafeteria
- * simulation.
- *
- * This file contains definitions shared across all processes,
- * including data structure limits, station indices,
- * and identifiers for the System V semaphore set.
- */
 
-/**
- * @brief Maximum number of dish variants available.
- * Used to size the portion arrays in the SharedData structure.
- */
-#define MAX_DISH_TYPES 10
-
-/**
- * @name Station Indices
- * Unique numerical identifiers for each cafeteria station.
- * @{
- */
-#define STATION_PRIMI 0   /**< @brief Index for the First Course station */
-#define STATION_SECONDI 1 /**< @brief Index for the Main Course station */
-#define STATION_COFFEE 2  /**< @brief Index for the Coffee/Dessert station */
-#define STATION_CASSA 3   /**< @brief Index for the Cashier station */
-#define NUM_STATIONS 4    /**< @brief Total number of operational stations */
-/** @} */
+/* ========================================================================== */
+/*                             SEMAPHORE CONFIGURATION                        */
+/* ========================================================================== */
 
 /**
  * @name System V Semaphore Indices
@@ -134,6 +123,29 @@ typedef struct {
 #define SEM_MUTEX_PORZIONI_S                                                   \
   10                /**< @brief Mutex to retrieve Main Course portions */
 #define NUM_SEMS 11 /**< @brief Total number of semaphores in the set */
+/** @} */
+
+
+/* ========================================================================== */
+/*                             SIMULATION LOGIC                               */
+/* ========================================================================== */
+
+/**
+ * @brief Maximum number of dish variants available.
+ * Used to size the portion arrays in the SharedData structure.
+ */
+#define MAX_DISH_TYPES 10
+
+/**
+ * @name Station Indices
+ * Unique numerical identifiers for each cafeteria station.
+ * @{
+ */
+#define STATION_PRIMI 0   /**< @brief Index for the First Course station */
+#define STATION_SECONDI 1 /**< @brief Index for the Main Course station */
+#define STATION_COFFEE 2  /**< @brief Index for the Coffee/Dessert station */
+#define STATION_CASSA 3   /**< @brief Index for the Cashier station */
+#define NUM_STATIONS 4    /**< @brief Total number of operational stations */
 /** @} */
 
 /**
@@ -165,14 +177,6 @@ typedef struct {
 
 #define SIM_DAY_SECOND                                                         \
   (8 * 60 * 60) /**< @brief Total simulated seconds in an 8-hour workday */
-/** @} */
-
-/**
- * @name Message Queue Configuration
- * Global constraints on the number of active message queues.
- * @{
- */
-#define NUM_QUEUES 5                     /**< @brief Total number of message queues (4 station queues + 1 response queue) */
 /** @} */
 
 #endif

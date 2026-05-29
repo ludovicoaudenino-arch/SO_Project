@@ -26,7 +26,7 @@ extern char **environ;
 
 static int shm_id = -1;
 static int sem_id = -1;
-static int msg_queues[5] = {-1, -1, -1, -1, -1};
+static int msg_queues[NUM_QUEUES] = {-1, -1, -1, -1, -1};
 static struct SharedData *shm = NULL;
 static pid_t *operators = NULL;
 static pid_t *users = NULL;
@@ -48,7 +48,7 @@ static void cleanup_ipc() {
   if (sem_id != -1) {
     remove_semaphores(sem_id);
   }
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < NUM_QUEUES; i++) {
     if (msg_queues[i] != -1) {
       remove_message_queue(msg_queues[i]);
     }
@@ -392,12 +392,10 @@ int main(int argc, char *argv[]) {
   initialize_sem();
   shm->sem_id = sem_id;
 
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < NUM_QUEUES; i++) {
     msg_queues[i] = create_message_queue();
-    shm->msg_queue_requests[i] = msg_queues[i];
+    shm->msg_queue_list[i] = msg_queues[i];
   }
-  msg_queues[4] = create_message_queue();
-  shm->msg_queue_served = msg_queues[4];
 
   /* --- Phase 3: Allocate PID arrays and spawn child processes --- */
   operators = malloc(shm->config.nof_workers * sizeof(pid_t));

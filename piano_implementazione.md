@@ -1053,9 +1053,8 @@ make clean && make
 
 ### Fase 3: Operatore cassa (1-2 giorni)
 
-- [ ] `operatore_cassa.c`: simile all'operatore ma con calcolo ricavo
-- [ ] Ricezione lista piatti, calcolo totale, aggiornamento ricavo
-- [ ] Tempo di servizio con variazione ±20%
+- [v] Ricezione lista piatti, calcolo totale, aggiornamento ricavo
+- [v] Tempo di servizio con variazione ±20%
 - [ ] Verificare: utente → stazione → cassa funziona end-to-end
 
 ### Fase 4: Utente — flusso completo (2-3 giorni)
