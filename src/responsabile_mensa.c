@@ -22,12 +22,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define OPERATOR_PATH "./bin/operatore"
-#define USER_PATH "./bin/utente"
-#define ARGC_MAX_LENGTH 16
-#define TOTAL_CHILDREN ((shm->config.nof_workers) + (shm->config.nof_users))
-#define SIM_DAY_SECOND (8 * 60 * 60)
-
 extern char **environ;
 
 static int shm_id = -1;
@@ -36,12 +30,6 @@ static int msg_queues[5] = {-1, -1, -1, -1, -1};
 static struct SharedData *shm = NULL;
 static pid_t *operators = NULL;
 static pid_t *users = NULL;
-typedef struct {
-  int station_id;
-  int station_avg_srvc;
-  int curr_assignement;
-  int max_assignement;
-} StationInfo;
 
 /**
  * @brief Releases all IPC resources and dynamic memory at process exit.
@@ -195,20 +183,27 @@ static int read_menu_file(const char *path) {
 }
 
 /**
- * @brief Sorts stations by average service time in descending order.
+ * @brief Sorts station indices by average service time in descending order.
  *
- * Uses selection sort to prioritize stations with longer service times
- * during the operator assignment phase.
+ * Builds a priority array of station indices sorted so that stations
+ * with the longest average service time come first. This indirection
+ * avoids modifying the shared memory stations array.
  *
- * @param station_info Array of NUM_STATIONS StationInfo structs to sort.
+ * @param stations The StationData array from shared memory.
+ * @param priority Output array of NUM_STATIONS indices, sorted by avg_srvc
+ * descending.
  */
-static void sort_station_info(StationInfo station_info[]) {
-  for (int i = 0; i < 3; i++) {
-    for (int j = i + 1; j < 4; j++) {
-      if (station_info[i].station_avg_srvc < station_info[j].station_avg_srvc) {
-        StationInfo tmp = station_info[j];
-        station_info[j] = station_info[i];
-        station_info[i] = tmp;
+static void sort_station_priority(const StationData stations[],
+                                  int priority[]) {
+  for (int i = 0; i < NUM_STATIONS; i++) {
+    priority[i] = i;
+  }
+  for (int i = 0; i < NUM_STATIONS - 1; i++) {
+    for (int j = i + 1; j < NUM_STATIONS; j++) {
+      if (stations[priority[i]].avg_srvc < stations[priority[j]].avg_srvc) {
+        int tmp = priority[i];
+        priority[i] = priority[j];
+        priority[j] = tmp;
       }
     }
   }
@@ -221,37 +216,38 @@ static void sort_station_info(StationInfo station_info[]) {
  * order). Additional operators are distributed using a weighted ratio that
  * balances service time against current assignment count.
  *
- * @param station_info Array of station metadata (modified in place).
+ * @param stations The StationData array from shared memory.
+ * @param priority Array of station indices sorted by priority.
+ * @param assigned Local array tracking how many operators have been assigned
+ * per station.
  * @param index Zero-based index of the operator being assigned.
  * @return Station ID on success, -1 if all stations are at capacity.
  */
-static int get_target_station(StationInfo station_info[], int index) {
-  int target_station = -1;
-
-  if (index < 4) {
-    target_station = station_info[index].station_id;
-    station_info[index].curr_assignement++;
-  } else {
-    int best = -1;
-    for (int j = 0; j < 4; j++) {
-      if (station_info[j].curr_assignement >= station_info[j].max_assignement)
-        continue;
-      if (best == -1 || station_info[j].station_avg_srvc *
-                                station_info[best].curr_assignement >
-                            station_info[best].station_avg_srvc *
-                                station_info[j].curr_assignement) {
-        best = j;
-      }
-    }
-    if (best == -1) {
-      fprintf(stderr, "WARNING: worker %d not assigned, all stations full\n",
-              index);
-      return -1;
-    }
-    target_station = station_info[best].station_id;
-    station_info[best].curr_assignement++;
+static int get_target_station(const StationData stations[],
+                              const int priority[], int assigned[], int index) {
+  if (index < NUM_STATIONS) {
+    int sid = priority[index];
+    assigned[sid]++;
+    return sid;
   }
-  return target_station;
+
+  int best = -1;
+  for (int j = 0; j < NUM_STATIONS; j++) {
+    int sid = priority[j];
+    if (assigned[sid] >= stations[sid].max_operators)
+      continue;
+    if (best == -1 || stations[sid].avg_srvc * assigned[best] >
+                          stations[best].avg_srvc * assigned[sid]) {
+      best = sid;
+    }
+  }
+  if (best == -1) {
+    fprintf(stderr, "WARNING: worker %d not assigned, all stations full\n",
+            index);
+    return -1;
+  }
+  assigned[best]++;
+  return best;
 }
 
 /**
@@ -313,24 +309,18 @@ static pid_t spawn_user() {
 /**
  * @brief Spawns all operator processes using the station assignment policy.
  *
- * Builds a StationInfo array from the current configuration, sorts it by
- * service time priority, and assigns each operator to the most appropriate
- * station via get_target_station().
+ * Sorts station indices by service time priority and assigns each operator
+ * to the most appropriate station via get_target_station().
  */
 static void initialize_operators() {
-  StationInfo station_info[4] = {{STATION_PRIMI, shm->config.avg_srvc_primi, 0,
-                                  shm->config.nof_wk_seats_primi},
-                                 {STATION_SECONDI, shm->config.avg_srvc_secondi,
-                                  0, shm->config.nof_wk_seats_secondi},
-                                 {STATION_COFFEE, shm->config.avg_srvc_coffee,
-                                  0, shm->config.nof_wk_seats_coffee},
-                                 {STATION_CASSA, shm->config.avg_srvc_cassa, 0,
-                                  shm->config.nof_wk_seats_cassa}};
+  int priority[NUM_STATIONS];
+  int assigned[NUM_STATIONS] = {0};
 
-  sort_station_info(station_info);
+  sort_station_priority(shm->stations, priority);
 
   for (int i = 0; i < shm->config.nof_workers; i++) {
-    int target_station = get_target_station(station_info, i);
+    int target_station =
+        get_target_station(shm->stations, priority, assigned, i);
     operators[i] = spawn_operator(target_station);
   }
 }
@@ -347,6 +337,41 @@ static void initialize_users() {
   }
 }
 
+static void initialize_stations(struct SharedData *shm) {
+  shm->stations[STATION_PRIMI].avg_srvc = shm->config.avg_srvc_primi;
+  shm->stations[STATION_PRIMI].srvc_delta = 50;
+  shm->stations[STATION_PRIMI].sem_seats_index = SEM_SEATS_PRIMI;
+  shm->stations[STATION_PRIMI].msg_type = ORDER_PRIMI_TYPE;
+  shm->stations[STATION_PRIMI].queue_length = 0;
+  shm->stations[STATION_PRIMI].active_operators = 0;
+  shm->stations[STATION_PRIMI].max_operators = shm->config.nof_wk_seats_primi;
+
+  shm->stations[STATION_SECONDI].avg_srvc = shm->config.avg_srvc_secondi;
+  shm->stations[STATION_SECONDI].srvc_delta = 50;
+  shm->stations[STATION_SECONDI].sem_seats_index = SEM_SEATS_SECONDI;
+  shm->stations[STATION_SECONDI].msg_type = ORDER_SECONDI_TYPE;
+  shm->stations[STATION_SECONDI].queue_length = 0;
+  shm->stations[STATION_SECONDI].active_operators = 0;
+  shm->stations[STATION_SECONDI].max_operators =
+      shm->config.nof_wk_seats_secondi;
+
+  shm->stations[STATION_COFFEE].avg_srvc = shm->config.avg_srvc_coffee;
+  shm->stations[STATION_COFFEE].srvc_delta = 80;
+  shm->stations[STATION_COFFEE].sem_seats_index = SEM_SEATS_COFFEE;
+  shm->stations[STATION_COFFEE].msg_type = ORDER_COFFEE_TYPE;
+  shm->stations[STATION_COFFEE].queue_length = 0;
+  shm->stations[STATION_COFFEE].active_operators = 0;
+  shm->stations[STATION_COFFEE].max_operators = shm->config.nof_wk_seats_coffee;
+
+  shm->stations[STATION_CASSA].avg_srvc = shm->config.avg_srvc_cassa;
+  shm->stations[STATION_CASSA].srvc_delta = 20;
+  shm->stations[STATION_CASSA].sem_seats_index = SEM_SEATS_CASSA;
+  shm->stations[STATION_CASSA].msg_type = ORDER_CASSA_TYPE;
+  shm->stations[STATION_CASSA].queue_length = 0;
+  shm->stations[STATION_CASSA].active_operators = 0;
+  shm->stations[STATION_CASSA].max_operators = shm->config.nof_wk_seats_cassa;
+}
+
 int main(int argc, char *argv[]) {
 
   /* --- Phase 1: Setup signal handlers and atexit cleanup --- */
@@ -356,6 +381,8 @@ int main(int argc, char *argv[]) {
   initialize_shm();
 
   parse_config((argc > 1) ? argv[1] : NULL, &shm->config);
+
+  initialize_stations(shm);
 
   if (read_menu_file(shm->config.menu_file) == -1) {
     perror("ERROR OPENING MENU FILE");
@@ -394,7 +421,7 @@ int main(int argc, char *argv[]) {
   for (int current_day = 1; current_day <= shm->config.sim_duration;
        current_day++) {
     /* Wait for all children to signal readiness at the barrier */
-    sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN, 0);
+    sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
 
     /* Prepare the new day state under mutex protection */
     sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
@@ -409,7 +436,7 @@ int main(int argc, char *argv[]) {
     sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
     /* Broadcast day start: unblock all children simultaneously */
-    sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN, 0);
+    sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN(shm), 0);
 
     /* Let the simulated workday elapse (8 hours) */
     sim_sleep(SIM_DAY_SECOND, shm->config.n_nano_secs);

@@ -19,8 +19,16 @@
  * @brief Real-time status of an individual cafeteria station.
  */
 typedef struct StationData {
+  /* --- Static Properties (initialized at startup) --- */
+  int avg_srvc;         /**< @brief Average service time for this station */
+  int srvc_delta;       /**< @brief Delta variation for service time randomness */
+  int sem_seats_index;  /**< @brief Semaphore index for operator seats */
+  int msg_type;         /**< @brief Message type for user requests */
+
+  /* --- Dynamic State --- */
   int queue_length;     /**< @brief Current number of users waiting in queue */
   int active_operators; /**< @brief Number of operators currently working here */
+  int max_operators;    /**< @brief Maximum number of operators allowed (from config seats) */
 } StationData;
 
 /**
@@ -43,10 +51,7 @@ struct SharedData {
 
   /** @name Station States */
   /** @{ */
-  StationData station_primi;   /**< @brief Status of the First Course station */
-  StationData station_secondi; /**< @brief Status of the Main Course station */
-  StationData station_coffee;  /**< @brief Status of the Coffee/Dessert station */
-  StationData station_cassa;   /**< @brief Status of the Cashier station */
+  StationData stations[NUM_STATIONS];   /**< @brief Real-time status and properties of all stations */
   /** @} */
 
   /** @name Food Portions */
