@@ -14,7 +14,6 @@
 
 static int shm_id;
 static int sem_id;
-static int msg_id[NUM_QUEUES];
 static int target_station;
 volatile sig_atomic_t should_exit = 0;
 
@@ -31,7 +30,7 @@ static void set_sigaction() {
 
 static void parse_arguments(int argc, char *argv[]) {
   if (argc < 3) {
-    perror("NOT ENOUGH ARG");
+    fprintf(stderr, "NOT ENOUGH ARGUMENTS");
     exit(EXIT_FAILURE);
   }
   shm_id = atoi(argv[1]);

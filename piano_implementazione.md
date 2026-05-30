@@ -1055,7 +1055,7 @@ make clean && make
 
 - [v] Ricezione lista piatti, calcolo totale, aggiornamento ricavo
 - [v] Tempo di servizio con variazione ±20%
-- [ ] Verificare: utente → stazione → cassa funziona end-to-end
+- [v] Verificare: utente → stazione → cassa funziona end-to-end
 
 ### Fase 4: Utente — flusso completo (2-3 giorni)
 

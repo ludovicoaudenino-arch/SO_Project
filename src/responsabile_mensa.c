@@ -158,6 +158,7 @@ static void initialize_sem() {
 static int read_menu_file(const char *path) {
   FILE *f = fopen(path, "r");
   if (f == NULL) {
+    perror("ERROR OPENING MENU' FILE");
     return -1;
   }
   char line[256];
@@ -337,6 +338,16 @@ static void initialize_users() {
   }
 }
 
+/**
+ * @brief Initializes the parameters and capacities of all cafeteria stations.
+ *
+ * Configures the service times, delta ranges, semaphore indices, message
+ * types, queue lengths, active operator counts, and maximum capacities for
+ * first course, second course, coffee, and checkout (cassa) stations using
+ * configuration values loaded in the shared memory.
+ *
+ * @param shm Pointer to the SharedData structure in shared memory.
+ */
 static void initialize_stations(struct SharedData *shm) {
   shm->stations[STATION_PRIMI].avg_srvc = shm->config.avg_srvc_primi;
   shm->stations[STATION_PRIMI].srvc_delta = 50;
@@ -385,7 +396,6 @@ int main(int argc, char *argv[]) {
   initialize_stations(shm);
 
   if (read_menu_file(shm->config.menu_file) == -1) {
-    perror("ERROR OPENING MENU FILE");
     exit(EXIT_FAILURE);
   }
 
