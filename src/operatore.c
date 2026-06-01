@@ -13,7 +13,6 @@
 #include <unistd.h>
 
 static int shm_id;
-static int sem_id;
 static int target_station;
 volatile sig_atomic_t should_exit = 0;
 
@@ -157,21 +156,21 @@ int main(int argc, char *argv[]) {
   set_sigaction();
 
   while (shm->simulation_running) {
-    sem_op(sem_id, SEM_READY, +1, 0);
-    sem_op(sem_id, SEM_DAY_START, -1, 0);
+    sem_op(shm->sem_id, SEM_READY, +1, 0);
+    sem_op(shm->sem_id, SEM_DAY_START, -1, 0);
 
     handle_jolly_assignment(shm);
 
     if (target_station >= 0 && target_station <= 3) {
       int target_sem = shm->stations[target_station].sem_seats_index;
-      sem_op(sem_id, target_sem, -1, SEM_UNDO);
+      sem_op(shm->sem_id, target_sem, -1, SEM_UNDO);
     }
 
     run_workday(shm);
 
     if (target_station >= 0 && target_station <= 3) {
       int target_sem = shm->stations[target_station].sem_seats_index;
-      sem_op(sem_id, target_sem, +1, SEM_UNDO);
+      sem_op(shm->sem_id, target_sem, +1, SEM_UNDO);
     }
   }
   return 0;

@@ -419,11 +419,11 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
+  shm->simulation_running = 1;
+
   initialize_operators();
 
   initialize_users();
-
-  shm->simulation_running = 1;
 
   /* --- Phase 4: Daily simulation loop --- */
   for (int current_day = 1; current_day <= shm->config.sim_duration;
