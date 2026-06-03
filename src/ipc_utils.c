@@ -102,7 +102,10 @@ void set_all_semaphores(int semid, unsigned short *values) {
 
 void sem_op(int semid, int sem_num, int op, short flags) {
   struct sembuf sb = {sem_num, op, flags};
-  if (semop(semid, &sb, 1) == -1) {
+  while (semop(semid, &sb, 1) == -1) {
+    if (errno == EINTR) {
+      continue;
+    }
     perror("ERROR SEMOP");
     exit(EXIT_FAILURE);
   }

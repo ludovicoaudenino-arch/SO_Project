@@ -1059,14 +1059,14 @@ make clean && make
 
 ### Fase 4: Utente — flusso completo (2-3 giorni)
 
-- [ ] `utente.c`: scelta menu, decisione ordine stazioni
-- [ ] Invio richiesta alla stazione, attesa risposta
-- [ ] Gestione piatto esaurito (fallback ad altro piatto o desistenza)
-- [ ] Passaggio alla cassa
-- [ ] Seduta al tavolo (semaforo) + tempo di consumo
-- [ ] Aggiornamento statistiche utente servito/non servito
-- [ ] Gestione fine giornata in coda (SIGUSR1 o check periodico)
-- [ ] Verificare: simulazione completa con N utenti e M operatori
+- [v] `utente.c`: scelta menu, decisione ordine stazioni
+- [v] Invio richiesta alla stazione, attesa risposta
+- [v] Gestione piatto esaurito (fallback ad altro piatto o desistenza)
+- [v] Passaggio alla cassa
+- [v] Seduta al tavolo (semaforo) + tempo di consumo
+- [v] Aggiornamento statistiche utente servito/non servito
+- [v] Gestione fine giornata in coda (SIGUSR1 o check periodico)
+- [v] Verificare: simulazione completa con N utenti e M operatori
 
 ### Fase 5: Refill porzioni (1 giorno)
 
@@ -1087,10 +1087,10 @@ make clean && make
 
 - [ ] Implementare tutte le voci statistiche richieste
 - [ ] `stats.c`: funzioni di aggiornamento thread-safe (con semaforo mutex)
-- [ ] `print_daily_stats()` e `print_final_stats()`
-- [ ] Reset giornaliero
+- [v] `print_daily_stats()` e `print_final_stats()`
+- [v] Reset giornaliero
 - [ ] Calcolo medie (al giorno, per stazione)
-- [ ] Piatti avanzati = porzioni restanti a fine giornata
+- [v] Piatti avanzati = porzioni restanti a fine giornata
 - [ ] Verificare: confronto manuale numeri statistiche con log di debug
 
 ### Fase 8: Terminazione e segnali (1-2 giorni)

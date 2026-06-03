@@ -1,6 +1,7 @@
 #ifndef IPC_UTILS_H
 #define IPC_UTILS_H
 
+#include "shared_data.h"
 #include <stddef.h>
 
 /**

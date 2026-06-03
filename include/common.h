@@ -37,6 +37,7 @@
 #define ORDER_COFFEE_TYPE 1
 #define ORDER_CASSA_TYPE 1
 #define JOLLY_MSG_TYPE 63
+#define ORDER_TYPE 1
 /** @} */
 
 /**
@@ -191,4 +192,7 @@ typedef struct {
   (8 * 60 * 60) /**< @brief Total simulated seconds in an 8-hour workday */
 /** @} */
 
+#define EXIT_NOFOOD 2
+
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #endif

@@ -45,16 +45,16 @@ static void serve_primi_secondi(struct SharedData *shm, ServingMsg *order) {
 
   sem_op(sem_id, portion_mutex, -1, SEM_UNDO);
   if (target_station == 0) {
-    if (shm->portion_left_primi[dish_type] > 0) {
-      shm->portion_left_primi[dish_type]--;
+    if (shm->stations[target_station].portion_left[dish_type] > 0) {
+      shm->stations[target_station].portion_left[dish_type]--;
       served = 1;
       sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
       shm->sim_stats.dishes_primi_today++;
       sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
     }
   } else {
-    if (shm->portion_left_secondi[dish_type] > 0) {
-      shm->portion_left_secondi[dish_type]--;
+    if (shm->stations[target_station].portion_left[dish_type] > 0) {
+      shm->stations[target_station].portion_left[dish_type]--;
       served = 1;
       sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
       shm->sim_stats.dishes_secondi_today++;
@@ -124,16 +124,20 @@ static void run_workday(struct SharedData *shm) {
 
     if (target_station == STATION_CASSA) {
       OrderMsg order;
-      receive_message(shm->msg_queue_list[target_station], &order,
-                      MSG_CONTENT_SIZE(OrderMsg),
-                      shm->stations[target_station].msg_type, 0);
+      if (receive_message(shm->msg_queue_list[target_station], &order,
+                          MSG_CONTENT_SIZE(OrderMsg),
+                          shm->stations[target_station].msg_type, 0) == -1) {
+        continue;
+      }
       sim_sleep(service_time, shm->config.n_nano_secs);
       serve_cassa(shm, &order);
     } else {
       ServingMsg order;
-      receive_message(shm->msg_queue_list[target_station], &order,
-                      MSG_CONTENT_SIZE(ServingMsg),
-                      shm->stations[target_station].msg_type, 0);
+      if (receive_message(shm->msg_queue_list[target_station], &order,
+                          MSG_CONTENT_SIZE(ServingMsg),
+                          shm->stations[target_station].msg_type, 0) == -1) {
+        continue;
+      }
       sim_sleep(service_time, shm->config.n_nano_secs);
       if (target_station == STATION_PRIMI ||
           target_station == STATION_SECONDI) {

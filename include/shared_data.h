@@ -31,6 +31,11 @@ typedef struct StationData {
                          */
   int max_operators;    /**< @brief Maximum number of operators allowed (from
                            config seats) */
+  int portion_left[MAX_DISH_TYPES]; /**< @brief Remaining portions per
+                  First Course dish type */
+  int nof_type; /**< @brief Number of distinct Main Course dishes loaded
+                           from menu */
+  /** @} */
 } StationData;
 
 /**
@@ -60,18 +65,6 @@ struct SharedData {
                                          properties of all stations */
   /** @} */
 
-  /** @name Food Portions */
-  /** @{ */
-  int portion_left_primi[MAX_DISH_TYPES];   /**< @brief Remaining portions per
-                                               First Course dish type */
-  int portion_left_secondi[MAX_DISH_TYPES]; /**< @brief Remaining portions per
-                                               Main Course dish type */
-  int nof_type_primi; /**< @brief Number of distinct First Course dishes loaded
-                         from menu */
-  int nof_type_secondi; /**< @brief Number of distinct Main Course dishes loaded
-                           from menu */
-  /** @} */
-
   /** @name Tables */
   /** @{ */
   int table_seats_free; /**< @brief Number of free seats at the dining tables */
@@ -79,7 +72,9 @@ struct SharedData {
 
   /** @name Message Queues */
   /** @{ */
-  int msg_queue_list[NUM_QUEUES]; /**< @brief Message queues: [0..NUM_QUEUES-2] for station requests, [NUM_QUEUES-1] for served replies */
+  int msg_queue_list[NUM_QUEUES]; /**< @brief Message queues: [0..NUM_QUEUES-2]
+                                     for station requests, [NUM_QUEUES-1] for
+                                     served replies */
   /** @} */
 
   /** @name Semaphores */

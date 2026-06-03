@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/msg.h>
 #include <sys/sem.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -77,6 +78,23 @@ static void wait_for_children() {
   if (users != NULL) {
     for (int i = 0; i < shm->config.nof_users; i++) {
       waitpid(users[i], NULL, 0);
+    }
+  }
+}
+
+/**
+ * @brief Discards all messages currently remaining in all message queues.
+ *
+ * This prevents stale requests from a previous day from leaking into and
+ * corrupting the next day's simulation. Called when all children are safely
+ * blocked at the daily startup barrier.
+ */
+static void purge_all_queues(struct SharedData *shm) {
+  char buf[2048];
+  for (int i = 0; i < NUM_QUEUES; i++) {
+    while (msgrcv(shm->msg_queue_list[i], buf, sizeof(buf) - sizeof(long), 0,
+                  IPC_NOWAIT) != -1) {
+      // Discard message
     }
   }
 }
@@ -171,14 +189,15 @@ static int read_menu_file(const char *path) {
     }
   }
   fclose(f);
-  shm->nof_type_primi = p_count;
-  shm->nof_type_secondi = s_count;
+  shm->stations[STATION_PRIMI].nof_type = p_count;
+  shm->stations[STATION_SECONDI].nof_type = s_count;
 
   for (int i = 0; i < p_count; i++) {
-    shm->portion_left_primi[i] = shm->config.avg_refill_primi;
+    shm->stations[STATION_PRIMI].portion_left[i] = shm->config.avg_refill_primi;
   }
   for (int i = 0; i < s_count; i++) {
-    shm->portion_left_secondi[i] = shm->config.avg_refill_secondi;
+    shm->stations[STATION_SECONDI].portion_left[i] =
+        shm->config.avg_refill_secondi;
   }
   return 0;
 }
@@ -373,6 +392,7 @@ static void initialize_stations(struct SharedData *shm) {
   shm->stations[STATION_COFFEE].queue_length = 0;
   shm->stations[STATION_COFFEE].active_operators = 0;
   shm->stations[STATION_COFFEE].max_operators = shm->config.nof_wk_seats_coffee;
+  shm->stations[STATION_COFFEE].nof_type = 1;
 
   shm->stations[STATION_CASSA].avg_srvc = shm->config.avg_srvc_cassa;
   shm->stations[STATION_CASSA].srvc_delta = 20;
@@ -424,22 +444,26 @@ int main(int argc, char *argv[]) {
   initialize_operators();
 
   initialize_users();
-
   /* --- Phase 4: Daily simulation loop --- */
   for (int current_day = 1; current_day <= shm->config.sim_duration;
        current_day++) {
     /* Wait for all children to signal readiness at the barrier */
     sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
 
+    /* Purge stale messages from queues before starting a new day */
+    purge_all_queues(shm);
+
     /* Prepare the new day state under mutex protection */
     sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     shm->current_day = current_day;
     shm->day_running = 1;
-    for (int j = 0; j < shm->nof_type_primi; j++) {
-      shm->portion_left_primi[j] = shm->config.avg_refill_primi;
+    for (int j = 0; j < shm->stations[STATION_PRIMI].nof_type; j++) {
+      shm->stations[STATION_PRIMI].portion_left[j] =
+          shm->config.avg_refill_primi;
     }
-    for (int j = 0; j < shm->nof_type_secondi; j++) {
-      shm->portion_left_secondi[j] = shm->config.avg_refill_secondi;
+    for (int j = 0; j < shm->stations[STATION_SECONDI].nof_type; j++) {
+      shm->stations[STATION_SECONDI].portion_left[j] =
+          shm->config.avg_refill_secondi;
     }
     sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
@@ -452,12 +476,33 @@ int main(int argc, char *argv[]) {
     sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     shm->day_running = 0;
     sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+
+    /* Send SIGUSR1 to interrupt any blocking receive_message */
+    for (int i = 0; i < shm->config.nof_workers; i++) {
+      kill(operators[i], SIGUSR1);
+    }
+    for (int i = 0; i < shm->config.nof_users; i++) {
+      kill(users[i], SIGUSR1);
+    }
   }
 
   /* --- Phase 5: Graceful shutdown --- */
   sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
   shm->simulation_running = 0;
   sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+
+  /* Send SIGUSR1 to all child processes one last time to make sure they wake up
+   */
+  for (int i = 0; i < shm->config.nof_workers; i++) {
+    kill(operators[i], SIGUSR1);
+  }
+  for (int i = 0; i < shm->config.nof_users; i++) {
+    kill(users[i], SIGUSR1);
+  }
+
+  /* Wake up any children waiting on SEM_DAY_START so they check
+   * simulation_running and exit */
+  sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN(shm), 0);
 
   /* Reap all child processes before IPC cleanup runs via atexit */
   wait_for_children();
