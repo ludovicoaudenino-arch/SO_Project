@@ -54,6 +54,18 @@ static void parse_arguments(int argc, char *argv[]) {
   shm_id = atoi(argv[1]);
 }
 
+static void enter_queue(struct SharedData *shm, int station_type) {
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+  shm->stations[station_type].queue_length++;
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+}
+
+static void leave_queue(struct SharedData *shm, int station_type) {
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+  shm->stations[station_type].queue_length--;
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+}
+
 static void choose_preferenze(int *preferenze_type, int nof_type) {
   for (int i = 0; i < nof_type; i++) {
     preferenze_type[i] = i;
@@ -76,18 +88,13 @@ static int try_order(struct SharedData *shm, int *preferenze_type,
     return 0;
   }
 
-  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-  shm->stations[station_type].queue_length++;
-  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-
+  enter_queue(shm, station_type);
   ServingMsg order = {.pid = pid, .mytype = ORDER_TYPE};
   ServedMsg check_served = {.served = 0};
   int attempt = 0;
   while (!check_served.served) {
     if (should_exit || !shm->simulation_running || !shm->day_running) {
-      sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-      shm->stations[station_type].queue_length--;
-      sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+      leave_queue(shm, station_type);
       return 0;
     }
     if (attempt < shm->stations[station_type].nof_type) {
@@ -99,23 +106,42 @@ static int try_order(struct SharedData *shm, int *preferenze_type,
       if (receive_message(shm->msg_queue_list[NUM_QUEUES - 1], &check_served,
                           MSG_CONTENT_SIZE(ServedMsg), order.pid, 0) == -1) {
         if (should_exit || !shm->day_running) {
-          sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-          shm->stations[station_type].queue_length--;
-          sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+          leave_queue(shm, station_type);
           return 0;
         }
       }
     } else {
-      sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-      shm->stations[station_type].queue_length--;
-      sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+      leave_queue(shm, station_type);
       return 0;
     }
   }
-  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-  shm->stations[station_type].queue_length--;
-  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+  leave_queue(shm, station_type);
   return 1;
+}
+
+static ServedMsg perform_cassa_payment(struct SharedData *shm,
+                                       int piatti_ordered[]) {
+  enter_queue(shm, STATION_CASSA);
+  OrderMsg order;
+  order.primi_ordered = piatti_ordered[STATION_PRIMI];
+  order.secondi_ordered = piatti_ordered[STATION_SECONDI];
+  order.coffee_ordered = piatti_ordered[STATION_COFFEE];
+  order.pid = pid;
+  order.mytype = ORDER_TYPE;
+
+  send_message(shm->msg_queue_list[STATION_CASSA], &order,
+               MSG_CONTENT_SIZE(OrderMsg), 0);
+
+  ServedMsg served = {.served = 0};
+  while (receive_message(shm->msg_queue_list[NUM_QUEUES - 1], &served,
+                         MSG_CONTENT_SIZE(ServedMsg), order.pid, 0) == -1) {
+    if (should_exit || !shm->simulation_running || !shm->day_running) {
+      break;
+    }
+  }
+
+  leave_queue(shm, STATION_CASSA);
+  return served;
 }
 
 static void take_seat(struct SharedData *shm, int n_piatti) {
@@ -143,19 +169,17 @@ static void run_routine(struct SharedData *shm) {
   while (todo[0] == 0 || todo[1] == 0 || todo[2] == 0) {
     int min_queue = INT_MAX;
     int target_station = -1;
-
+    sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     for (int i = 0; i < 3; i++) {
       if (todo[i] == 0) {
-        sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
         int station_queue = shm->stations[i].queue_length;
         if (station_queue < min_queue) {
           min_queue = station_queue;
           target_station = i;
         }
-        sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
       }
     }
-
+    sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
     if (target_station != -1) {
       ordered[target_station] =
           try_order(shm, preferenze_list[target_station], target_station);
@@ -170,33 +194,7 @@ static void run_routine(struct SharedData *shm) {
     return;
   }
 
-  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-  shm->stations[STATION_CASSA].queue_length++;
-  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-
-  OrderMsg order;
-  order.primi_ordered = ordered[STATION_PRIMI];
-  order.secondi_ordered = ordered[STATION_SECONDI];
-  order.coffee_ordered = ordered[STATION_COFFEE];
-  order.pid = pid;
-  order.mytype = ORDER_TYPE;
-
-  send_message(shm->msg_queue_list[STATION_CASSA], &order,
-               MSG_CONTENT_SIZE(OrderMsg), 0);
-
-  ServedMsg served = {.served = 0};
-  while (receive_message(shm->msg_queue_list[NUM_QUEUES - 1], &served,
-                         MSG_CONTENT_SIZE(ServedMsg), order.pid, 0) == -1) {
-    if (should_exit || !shm->simulation_running || !shm->day_running) {
-      break;
-    }
-  }
-
-  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-  shm->stations[STATION_CASSA].queue_length--;
-  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-
-  if (served.served) {
+  if (perform_cassa_payment(shm, ordered).served) {
     int n_piatti = ordered[STATION_PRIMI] + ordered[STATION_SECONDI] +
                    ordered[STATION_COFFEE];
     if (n_piatti > 0) {

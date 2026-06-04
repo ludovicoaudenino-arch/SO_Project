@@ -188,11 +188,15 @@ typedef struct {
 #define TOTAL_CHILDREN(shm)                                                    \
   (((shm)->config.nof_workers) + ((shm)->config.nof_users))
 
-#define SIM_DAY_SECOND                                                         \
-  (8 * 60 * 60) /**< @brief Total simulated seconds in an 8-hour workday */
+#define SIM_DAY_SECOND(i)                                                      \
+  (i * 60 * 60) /**< @brief Total simulated seconds in an i-hour workday */
 /** @} */
 
 #define EXIT_NOFOOD 2
+
+#define WORK_MINUTE(i) ((i) * (60))
+#define REFILL_INTERVAL 10
+#define SECOND_TO_REFILL ((REFILL_INTERVAL) * (60))
 
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #endif

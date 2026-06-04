@@ -36,6 +36,9 @@ typedef struct StationData {
   int nof_type; /**< @brief Number of distinct Main Course dishes loaded
                            from menu */
   /** @} */
+  int avg_refill;
+
+  int max_portions;
 } StationData;
 
 /**

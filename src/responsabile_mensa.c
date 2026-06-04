@@ -94,7 +94,6 @@ static void purge_all_queues(struct SharedData *shm) {
   for (int i = 0; i < NUM_QUEUES; i++) {
     while (msgrcv(shm->msg_queue_list[i], buf, sizeof(buf) - sizeof(long), 0,
                   IPC_NOWAIT) != -1) {
-      // Discard message
     }
   }
 }
@@ -375,6 +374,8 @@ static void initialize_stations(struct SharedData *shm) {
   shm->stations[STATION_PRIMI].queue_length = 0;
   shm->stations[STATION_PRIMI].active_operators = 0;
   shm->stations[STATION_PRIMI].max_operators = shm->config.nof_wk_seats_primi;
+  shm->stations[STATION_PRIMI].avg_refill = shm->config.avg_refill_primi;
+  shm->stations[STATION_PRIMI].max_portions = shm->config.max_porzioni_primi;
 
   shm->stations[STATION_SECONDI].avg_srvc = shm->config.avg_srvc_secondi;
   shm->stations[STATION_SECONDI].srvc_delta = 50;
@@ -384,6 +385,9 @@ static void initialize_stations(struct SharedData *shm) {
   shm->stations[STATION_SECONDI].active_operators = 0;
   shm->stations[STATION_SECONDI].max_operators =
       shm->config.nof_wk_seats_secondi;
+  shm->stations[STATION_SECONDI].avg_refill = shm->config.avg_refill_secondi;
+  shm->stations[STATION_SECONDI].max_portions =
+      shm->config.max_porzioni_secondi;
 
   shm->stations[STATION_COFFEE].avg_srvc = shm->config.avg_srvc_coffee;
   shm->stations[STATION_COFFEE].srvc_delta = 80;
@@ -468,10 +472,26 @@ int main(int argc, char *argv[]) {
     sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
     /* Broadcast day start: unblock all children simultaneously */
-    sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN(shm), 0);
 
-    /* Let the simulated workday elapse (8 hours) */
-    sim_sleep(SIM_DAY_SECOND, shm->config.n_nano_secs);
+    sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN(shm), 0);
+    for (int i = 0; i < (WORK_MINUTE(8) / REFILL_INTERVAL); i++) {
+
+      sim_sleep(SECOND_TO_REFILL, shm->config.n_nano_secs);
+      sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+      for (int j = 0; j < NUM_STATIONS - 1; j++) {
+
+        int nof_type = shm->stations[j].nof_type;
+        int max_portions = shm->stations[j].max_portions;
+        int avg_refill = shm->stations[j].avg_refill;
+
+        for (int n = 0; n < nof_type; n++) {
+
+          int *portion_left = &shm->stations[j].portion_left[n];
+          *portion_left = MIN(*portion_left + avg_refill, max_portions);
+        }
+      }
+      sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+    }
     /* Signal end of service for this day */
     sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     shm->day_running = 0;
