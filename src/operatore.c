@@ -7,6 +7,7 @@
 #include "shared_data.h"
 #include "time_utils.h"
 #include <signal.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/sem.h>
@@ -14,12 +15,8 @@
 
 static int shm_id;
 static int target_station;
-volatile sig_atomic_t should_exit = 0;
 
-static void handle_signal(int sig) {
-  (void)sig;
-  should_exit = 1;
-}
+static void handle_signal(int sig) { (void)sig; }
 
 static void set_sigaction() {
   struct sigaction sa = {.sa_handler = handle_signal, .sa_flags = 0};
@@ -116,6 +113,25 @@ static void handle_jolly_assignment(struct SharedData *shm) {
   }
 }
 
+static int wait_order(struct SharedData *shm, void *order, int target_station,
+                      size_t msg_size) {
+  int reply_received = 0;
+
+  while (reply_received == 0) {
+    if (receive_message(shm->msg_queue_list[target_station], order, msg_size,
+                        shm->stations[target_station].msg_type,
+                        IPC_NOWAIT) == -1) {
+      if (!shm->day_running) {
+        return 0;
+      }
+      usleep(1000);
+    } else {
+      reply_received = 1;
+    }
+  }
+  return 1;
+}
+
 static void run_workday(struct SharedData *shm) {
   while (shm->day_running) {
     int service_time =
@@ -124,18 +140,16 @@ static void run_workday(struct SharedData *shm) {
 
     if (target_station == STATION_CASSA) {
       OrderMsg order;
-      if (receive_message(shm->msg_queue_list[target_station], &order,
-                          MSG_CONTENT_SIZE(OrderMsg),
-                          shm->stations[target_station].msg_type, 0) == -1) {
+      if (!wait_order(shm, &order, target_station,
+                      MSG_CONTENT_SIZE(OrderMsg))) {
         continue;
       }
       sim_sleep(service_time, shm->config.n_nano_secs);
       serve_cassa(shm, &order);
     } else {
       ServingMsg order;
-      if (receive_message(shm->msg_queue_list[target_station], &order,
-                          MSG_CONTENT_SIZE(ServingMsg),
-                          shm->stations[target_station].msg_type, 0) == -1) {
+      if (!wait_order(shm, &order, target_station,
+                      MSG_CONTENT_SIZE(ServingMsg))) {
         continue;
       }
       sim_sleep(service_time, shm->config.n_nano_secs);

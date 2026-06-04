@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/ipc.h>
 #include <sys/sem.h>
 #include <sys/types.h>
 #include <time.h>
@@ -66,6 +67,25 @@ static void leave_queue(struct SharedData *shm, int station_type) {
   sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 }
 
+static int wait_reply(struct SharedData *shm, ServedMsg *served,
+                      int station_type) {
+  int reply_received = 0;
+
+  while (reply_received == 0) {
+    if (receive_message(shm->msg_queue_list[NUM_QUEUES - 1], served,
+                        MSG_CONTENT_SIZE(ServedMsg), pid, IPC_NOWAIT) == -1) {
+      if (should_exit || !shm->day_running) {
+        leave_queue(shm, station_type);
+        return 0;
+      }
+      usleep(1000);
+    } else {
+      reply_received = 1;
+    }
+  }
+
+  return 1;
+}
 static void choose_preferenze(int *preferenze_type, int nof_type) {
   for (int i = 0; i < nof_type; i++) {
     preferenze_type[i] = i;
@@ -84,43 +104,39 @@ static void choose_from_menu(struct SharedData *shm) {
 
 static int try_order(struct SharedData *shm, int *preferenze_type,
                      int station_type) {
-  if (should_exit || !shm->simulation_running || !shm->day_running) {
+  if (should_exit || !shm->day_running) {
     return 0;
   }
 
   enter_queue(shm, station_type);
   ServingMsg order = {.pid = pid, .mytype = ORDER_TYPE};
   ServedMsg check_served = {.served = 0};
-  int attempt = 0;
-  while (!check_served.served) {
-    if (should_exit || !shm->simulation_running || !shm->day_running) {
-      leave_queue(shm, station_type);
+
+  for (int attempt = 0; attempt < shm->stations[station_type].nof_type;
+       attempt++) {
+    order.dish_type = (preferenze_type == NULL) ? 0 : preferenze_type[attempt];
+    send_message(shm->msg_queue_list[station_type], &order,
+                 MSG_CONTENT_SIZE(ServingMsg), 0);
+
+    if (wait_reply(shm, &check_served, station_type) == 0) {
       return 0;
     }
-    if (attempt < shm->stations[station_type].nof_type) {
-      order.dish_type =
-          (preferenze_type == NULL) ? 0 : preferenze_type[attempt++];
-      send_message(shm->msg_queue_list[station_type], &order,
-                   MSG_CONTENT_SIZE(ServingMsg), 0);
 
-      if (receive_message(shm->msg_queue_list[NUM_QUEUES - 1], &check_served,
-                          MSG_CONTENT_SIZE(ServedMsg), order.pid, 0) == -1) {
-        if (should_exit || !shm->day_running) {
-          leave_queue(shm, station_type);
-          return 0;
-        }
-      }
-    } else {
-      leave_queue(shm, station_type);
-      return 0;
+    if (check_served.served) {
+      break;
     }
   }
+
   leave_queue(shm, station_type);
-  return 1;
+  return check_served.served;
 }
 
 static ServedMsg perform_cassa_payment(struct SharedData *shm,
                                        int piatti_ordered[]) {
+  if (should_exit || !shm->day_running) {
+    ServedMsg served = {.served = 0};
+    return served;
+  }
   enter_queue(shm, STATION_CASSA);
   OrderMsg order;
   order.primi_ordered = piatti_ordered[STATION_PRIMI];
@@ -133,11 +149,8 @@ static ServedMsg perform_cassa_payment(struct SharedData *shm,
                MSG_CONTENT_SIZE(OrderMsg), 0);
 
   ServedMsg served = {.served = 0};
-  while (receive_message(shm->msg_queue_list[NUM_QUEUES - 1], &served,
-                         MSG_CONTENT_SIZE(ServedMsg), order.pid, 0) == -1) {
-    if (should_exit || !shm->simulation_running || !shm->day_running) {
-      break;
-    }
+  if (wait_reply(shm, &served, STATION_CASSA) == 0) {
+    return served;
   }
 
   leave_queue(shm, STATION_CASSA);
@@ -145,9 +158,11 @@ static ServedMsg perform_cassa_payment(struct SharedData *shm,
 }
 
 static void take_seat(struct SharedData *shm, int n_piatti) {
-  sem_op(shm->sem_id, SEM_TABLE_SEATS, -1, 0);
-  sim_sleep(n_piatti * 2, shm->config.n_nano_secs);
-  sem_op(shm->sem_id, SEM_TABLE_SEATS, +1, 0);
+  if (!should_exit && shm->simulation_running && shm->day_running) {
+    sem_op(shm->sem_id, SEM_TABLE_SEATS, -1, 0);
+    sim_sleep(n_piatti * 2, shm->config.n_nano_secs);
+    sem_op(shm->sem_id, SEM_TABLE_SEATS, +1, 0);
+  }
 
   sem_op(shm->sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
   shm->sim_stats.users_served_today++;
@@ -155,23 +170,28 @@ static void take_seat(struct SharedData *shm, int n_piatti) {
 }
 
 static void run_routine(struct SharedData *shm) {
-  if (should_exit || !shm->simulation_running || !shm->day_running) {
+  if (should_exit || !shm->day_running) {
     return;
   }
-  int todo[3] = {0, 0, 0};
+  int station_done[FOOD_STATION] = {0, 0, 0};
   int *preferenze_list[3] = {preferenze_primi, preferenze_secondi, NULL};
   int ordered[3] = {0, 0, 0};
 
   if (!want_coffee) {
-    todo[STATION_COFFEE] = 1;
+    station_done[STATION_COFFEE] = 1;
   }
 
-  while (todo[0] == 0 || todo[1] == 0 || todo[2] == 0) {
+  while (station_done[STATION_PRIMI] == 0 ||
+         station_done[STATION_SECONDI] == 0 ||
+         station_done[STATION_COFFEE] == 0) {
+    if (should_exit || !shm->day_running) {
+      break;
+    }
     int min_queue = INT_MAX;
     int target_station = -1;
     sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     for (int i = 0; i < 3; i++) {
-      if (todo[i] == 0) {
+      if (station_done[i] == 0) {
         int station_queue = shm->stations[i].queue_length;
         if (station_queue < min_queue) {
           min_queue = station_queue;
@@ -183,7 +203,7 @@ static void run_routine(struct SharedData *shm) {
     if (target_station != -1) {
       ordered[target_station] =
           try_order(shm, preferenze_list[target_station], target_station);
-      todo[target_station] = 1;
+      station_done[target_station] = 1;
     }
   }
 
@@ -197,9 +217,7 @@ static void run_routine(struct SharedData *shm) {
   if (perform_cassa_payment(shm, ordered).served) {
     int n_piatti = ordered[STATION_PRIMI] + ordered[STATION_SECONDI] +
                    ordered[STATION_COFFEE];
-    if (n_piatti > 0) {
-      take_seat(shm, n_piatti);
-    }
+    take_seat(shm, n_piatti);
   } else {
     sem_op(shm->sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
     shm->sim_stats.users_not_served_today++;

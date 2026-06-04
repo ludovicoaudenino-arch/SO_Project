@@ -1070,10 +1070,10 @@ make clean && make
 
 ### Fase 5: Refill porzioni (1 giorno)
 
-- [V] Timer nel responsabile mensa: ogni 10 minuti simulati
+- [v] Timer nel responsabile mensa: ogni 10 minuti simulati
 - [v] Incremento porzioni fino al massimo
 - [v] Protezione con mutex
-- [ ] Verificare: con poche porzioni iniziali e refill, gli utenti vengono serviti anche tardi nella giornata
+- [v] Verificare: con poche porzioni iniziali e refill, gli utenti vengono serviti anche tardi nella giornata
 
 ### Fase 6: Pause operatore (1-2 giorni)
 

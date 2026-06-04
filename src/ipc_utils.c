@@ -1,5 +1,6 @@
 #include "ipc_utils.h"
 #include <asm-generic/errno-base.h>
+#include <asm-generic/errno.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -144,7 +145,7 @@ void send_message(int mqid, void *msg, size_t size, int flags) {
 
 int receive_message(int mqid, void *msg, size_t size, long mtype, int flags) {
   if (msgrcv(mqid, msg, size, mtype, flags) == -1) {
-    if (errno == EINTR) {
+    if (errno == EINTR || errno == ENOMSG) {
       return -1;
     }
     perror("ERROR RECIVING MESSAGE");

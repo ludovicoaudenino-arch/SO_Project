@@ -199,4 +199,6 @@ typedef struct {
 #define SECOND_TO_REFILL ((REFILL_INTERVAL) * (60))
 
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
+
+#define FOOD_STATION 3
 #endif
