@@ -240,7 +240,7 @@ static void sort_station_priority(const StationData stations[],
  * @param assigned Local array tracking how many operators have been assigned
  * per station.
  * @param index Zero-based index of the operator being assigned.
- * @return Station ID on success, -1 if all stations are at capacity.
+ * @return Station ID on success
  */
 static int get_target_station(const StationData stations[],
                               const int priority[], int assigned[], int index) {
@@ -250,20 +250,13 @@ static int get_target_station(const StationData stations[],
     return sid;
   }
 
-  int best = -1;
-  for (int j = 0; j < NUM_STATIONS; j++) {
+  int best = 0;
+  for (int j = 1; j < NUM_STATIONS; j++) {
     int sid = priority[j];
-    if (assigned[sid] >= stations[sid].max_operators)
-      continue;
-    if (best == -1 || stations[sid].avg_srvc * assigned[best] >
-                          stations[best].avg_srvc * assigned[sid]) {
+    if (stations[sid].avg_srvc * assigned[best] >
+        stations[best].avg_srvc * assigned[sid]) {
       best = sid;
     }
-  }
-  if (best == -1) {
-    fprintf(stderr, "WARNING: worker %d not assigned, all stations full\n",
-            index);
-    return -1;
   }
   assigned[best]++;
   return best;

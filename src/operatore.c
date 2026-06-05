@@ -11,10 +11,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/sem.h>
+#include <time.h>
 #include <unistd.h>
 
 static int shm_id;
 static int target_station;
+static unsigned int seed;
+static int nof_pause;
 
 static void handle_signal(int sig) { (void)sig; }
 
@@ -104,15 +107,6 @@ static void serve_cassa(struct SharedData *shm, OrderMsg *order) {
                MSG_CONTENT_SIZE(ServedMsg), 0);
 }
 
-static void handle_jolly_assignment(struct SharedData *shm) {
-  if (target_station == -1) {
-    StationMsg jolly_msg;
-    receive_message(shm->msg_queue_list[NUM_QUEUES - 1], &jolly_msg,
-                    MSG_CONTENT_SIZE(StationMsg), JOLLY_MSG_TYPE, 0);
-    target_station = jolly_msg.station_id;
-  }
-}
-
 static int wait_order(struct SharedData *shm, void *order, int target_station,
                       size_t msg_size) {
   int reply_received = 0;
@@ -130,6 +124,26 @@ static int wait_order(struct SharedData *shm, void *order, int target_station,
     }
   }
   return 1;
+}
+
+static void go_pause(struct SharedData *shm, int target_station) {
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+  if (shm->stations[target_station].active_operators > 1 && nof_pause > 0 &&
+      shm->day_running) {
+    nof_pause--;
+    shm->stations[target_station].active_operators--;
+    sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+    sem_op(shm->sem_id, shm->stations[target_station].sem_seats_index, +1,
+           SEM_UNDO);
+    sim_sleep((WORKER_PAUSE * 60), shm->config.n_nano_secs);
+    sem_op(shm->sem_id, shm->stations[target_station].sem_seats_index, -1,
+           SEM_UNDO);
+    sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+    shm->stations[target_station].active_operators++;
+    sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+    return;
+  }
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 }
 
 static void run_workday(struct SharedData *shm) {
@@ -160,6 +174,10 @@ static void run_workday(struct SharedData *shm) {
         serve_caffe(shm, &order);
       }
     }
+    int prob_pausa = (rand_r(&seed) % 100);
+    if (prob_pausa < 15) {
+      go_pause(shm, target_station);
+    }
   }
 }
 
@@ -173,11 +191,11 @@ int main(int argc, char *argv[]) {
 
   set_sigaction();
 
+  seed = time(NULL) ^ getpid();
+
   while (shm->simulation_running) {
     sem_op(shm->sem_id, SEM_READY, +1, 0);
     sem_op(shm->sem_id, SEM_DAY_START, -1, 0);
-
-    handle_jolly_assignment(shm);
 
     if (target_station >= 0 && target_station <= 3) {
       int target_sem = shm->stations[target_station].sem_seats_index;

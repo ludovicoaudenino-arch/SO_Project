@@ -1077,11 +1077,11 @@ make clean && make
 
 ### Fase 6: Pause operatore (1-2 giorni)
 
-- [ ] Logica di decisione pausa (criterio casuale o periodico)
-- [ ] Vincolo: almeno 1 operatore attivo per stazione
-- [ ] Rilascio/riacquisizione posto
-- [ ] Aggiornamento statistiche pause
-- [ ] Verificare: nessun deadlock quando operatori vanno in pausa
+- [v] Logica di decisione pausa (criterio casuale o periodico)
+- [v] Vincolo: almeno 1 operatore attivo per stazione
+- [v] Rilascio/riacquisizione posto
+- [v] Aggiornamento statistiche pause
+- [v] Verificare: nessun deadlock quando operatori vanno in pausa
 
 ### Fase 7: Statistiche complete (1-2 giorni)
 

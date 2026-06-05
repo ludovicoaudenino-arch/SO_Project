@@ -201,4 +201,6 @@ typedef struct {
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
 #define FOOD_STATION 3
+
+#define WORKER_PAUSE 15
 #endif
