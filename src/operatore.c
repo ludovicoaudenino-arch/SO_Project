@@ -132,6 +132,11 @@ static void go_pause(struct SharedData *shm, int target_station) {
       shm->day_running) {
     nof_pause--;
     shm->stations[target_station].active_operators--;
+    
+    sem_op(shm->sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
+    shm->sim_stats.pauses_today++;
+    sem_op(shm->sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
+
     sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
     sem_op(shm->sem_id, shm->stations[target_station].sem_seats_index, +1,
            SEM_UNDO);
@@ -193,6 +198,8 @@ int main(int argc, char *argv[]) {
 
   seed = time(NULL) ^ getpid();
 
+  nof_pause = shm->config.nof_pause;
+
   while (shm->simulation_running) {
     sem_op(shm->sem_id, SEM_READY, +1, 0);
     sem_op(shm->sem_id, SEM_DAY_START, -1, 0);
@@ -200,12 +207,18 @@ int main(int argc, char *argv[]) {
     if (target_station >= 0 && target_station <= 3) {
       int target_sem = shm->stations[target_station].sem_seats_index;
       sem_op(shm->sem_id, target_sem, -1, SEM_UNDO);
+      sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+      shm->stations[target_station].active_operators++;
+      sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
     }
 
     run_workday(shm);
 
     if (target_station >= 0 && target_station <= 3) {
       int target_sem = shm->stations[target_station].sem_seats_index;
+      sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+      shm->stations[target_station].active_operators--;
+      sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
       sem_op(shm->sem_id, target_sem, +1, SEM_UNDO);
     }
   }

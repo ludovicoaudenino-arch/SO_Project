@@ -237,9 +237,9 @@ int main(int argc, char *argv[]) {
   seed = time(NULL) ^ getpid();
 
   while (shm->simulation_running == 1) {
-    should_exit = 0;
     sem_op(shm->sem_id, SEM_READY, +1, 0);
     sem_op(shm->sem_id, SEM_DAY_START, -1, 0);
+    should_exit = 0;
 
     choose_from_menu(shm);
     run_routine(shm);

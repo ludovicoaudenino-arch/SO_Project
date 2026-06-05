@@ -81,4 +81,10 @@ void print_daily_stats(const SimStats *s, int day);
  */
 void print_final_stats(const SimStats *s, int termination_cause);
 
+/**
+ * @brief Accumulates daily statistics into the simulation totals and resets daily counters.
+ * @param s Pointer to the SimStats structure in shared memory.
+ */
+void accumulate_and_reset_daily_stats(SimStats *s);
+
 #endif

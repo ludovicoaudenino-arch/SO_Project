@@ -13,6 +13,7 @@
 #include "ipc_utils.h"
 #include "shared_data.h"
 #include "time_utils.h"
+#include "stats.h"
 #include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -488,6 +489,8 @@ int main(int argc, char *argv[]) {
     /* Signal end of service for this day */
     sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     shm->day_running = 0;
+    print_daily_stats(&shm->sim_stats, current_day);
+    accumulate_and_reset_daily_stats(&shm->sim_stats);
     sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
     /* Send SIGUSR1 to interrupt any blocking receive_message */
@@ -519,6 +522,8 @@ int main(int argc, char *argv[]) {
 
   /* Reap all child processes before IPC cleanup runs via atexit */
   wait_for_children();
+
+  print_final_stats(&shm->sim_stats, 0);
 
   exit(0);
 }
