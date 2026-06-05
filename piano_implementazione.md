@@ -1085,13 +1085,13 @@ make clean && make
 
 ### Fase 7: Statistiche complete (1-2 giorni)
 
-- [ ] Implementare tutte le voci statistiche richieste
-- [ ] `stats.c`: funzioni di aggiornamento thread-safe (con semaforo mutex)
+- [v] Implementare tutte le voci statistiche richieste
+- [v] `stats.c`: funzioni di aggiornamento thread-safe (con semaforo mutex)
 - [v] `print_daily_stats()` e `print_final_stats()`
 - [v] Reset giornaliero
-- [ ] Calcolo medie (al giorno, per stazione)
+- [v] Calcolo medie (al giorno, per stazione)
 - [v] Piatti avanzati = porzioni restanti a fine giornata
-- [ ] Verificare: confronto manuale numeri statistiche con log di debug
+- [v] Verificare: confronto manuale numeri statistiche con log di debug
 
 ### Fase 8: Terminazione e segnali (1-2 giorni)
 

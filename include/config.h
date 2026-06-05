@@ -68,9 +68,9 @@ typedef struct {
 
   /** @name Refill and Portions */
   /** @{ */
-  int avg_refill_primi; /**< @brief Average time to refill First Course portions
+  int avg_refill_primi; /**< @brief Average number of portions to refill/initialize First Course
                          */
-  int avg_refill_secondi;   /**< @brief Average time to refill Main Course
+  int avg_refill_secondi;   /**< @brief Average number of portions to refill/initialize Main Course
                                portions */
   int max_porzioni_primi;   /**< @brief Maximum number of First Course portions
                                per batch */

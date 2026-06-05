@@ -442,11 +442,12 @@ int main(int argc, char *argv[]) {
   initialize_operators();
 
   initialize_users();
+  /* Wait for all children to signal readiness at the barrier for the first day */
+  sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
+
   /* --- Phase 4: Daily simulation loop --- */
   for (int current_day = 1; current_day <= shm->config.sim_duration;
        current_day++) {
-    /* Wait for all children to signal readiness at the barrier */
-    sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
 
     /* Purge stale messages from queues before starting a new day */
     purge_all_queues(shm);
@@ -489,8 +490,6 @@ int main(int argc, char *argv[]) {
     /* Signal end of service for this day */
     sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     shm->day_running = 0;
-    print_daily_stats(&shm->sim_stats, current_day);
-    accumulate_and_reset_daily_stats(&shm->sim_stats);
     sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
     /* Send SIGUSR1 to interrupt any blocking receive_message */
@@ -500,6 +499,27 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < shm->config.nof_users; i++) {
       kill(users[i], SIGUSR1);
     }
+
+    /* Wait for all children to complete their day and signal ready */
+    sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
+
+    /* Now compute stats and leftovers safely */
+    sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+    int leftover_primi = 0;
+    for (int n = 0; n < shm->stations[STATION_PRIMI].nof_type; n++) {
+      leftover_primi += shm->stations[STATION_PRIMI].portion_left[n];
+    }
+    shm->sim_stats.dishes_leftover_primi_today = leftover_primi;
+
+    int leftover_secondi = 0;
+    for (int n = 0; n < shm->stations[STATION_SECONDI].nof_type; n++) {
+      leftover_secondi += shm->stations[STATION_SECONDI].portion_left[n];
+    }
+    shm->sim_stats.dishes_leftover_secondi_today = leftover_secondi;
+
+    print_daily_stats(&shm->sim_stats, current_day);
+    accumulate_and_reset_daily_stats(&shm->sim_stats);
+    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
   }
 
   /* --- Phase 5: Graceful shutdown --- */

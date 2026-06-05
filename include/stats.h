@@ -87,4 +87,13 @@ void print_final_stats(const SimStats *s, int termination_cause);
  */
 void accumulate_and_reset_daily_stats(SimStats *s);
 
+void stats_record_user_served(SimStats *s, int sem_id);
+void stats_record_user_not_served(SimStats *s, int sem_id);
+void stats_record_dish_served(SimStats *s, int sem_id, int station_type);
+void stats_record_revenue(SimStats *s, int sem_id, float amount);
+void stats_record_pause(SimStats *s, int sem_id);
+void stats_record_active_operator(SimStats *s, int sem_id);
+void stats_record_wait_time(SimStats *s, int sem_id, int station_type, long wait_time_sim_sec);
+
 #endif
+

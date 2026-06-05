@@ -18,6 +18,7 @@ static int shm_id;
 static int target_station;
 static unsigned int seed;
 static int nof_pause;
+int service_time;
 
 static void handle_signal(int sig) { (void)sig; }
 
@@ -38,30 +39,24 @@ static void parse_arguments(int argc, char *argv[]) {
 
 static void serve_primi_secondi(struct SharedData *shm, ServingMsg *order) {
   int sem_id = shm->sem_id;
+  int service_time =
+      random_service_time(shm->stations[target_station].avg_srvc,
+                          shm->stations[target_station].srvc_delta);
   int dish_type = order->dish_type;
   int served = 0;
   int portion_mutex =
       (target_station == 0) ? SEM_MUTEX_PORZIONI_P : SEM_MUTEX_PORZIONI_S;
 
   sem_op(sem_id, portion_mutex, -1, SEM_UNDO);
-  if (target_station == 0) {
-    if (shm->stations[target_station].portion_left[dish_type] > 0) {
-      shm->stations[target_station].portion_left[dish_type]--;
-      served = 1;
-      sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
-      shm->sim_stats.dishes_primi_today++;
-      sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
-    }
+  if (shm->stations[target_station].portion_left[dish_type] > 0) {
+    shm->stations[target_station].portion_left[dish_type]--;
+    sem_op(sem_id, portion_mutex, +1, SEM_UNDO);
+    sim_sleep(service_time, shm->config.n_nano_secs);
+    served = 1;
+    stats_record_dish_served(&shm->sim_stats, sem_id, target_station);
   } else {
-    if (shm->stations[target_station].portion_left[dish_type] > 0) {
-      shm->stations[target_station].portion_left[dish_type]--;
-      served = 1;
-      sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
-      shm->sim_stats.dishes_secondi_today++;
-      sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
-    }
+    sem_op(sem_id, portion_mutex, +1, SEM_UNDO);
   }
-  sem_op(sem_id, portion_mutex, +1, SEM_UNDO);
 
   ServedMsg reply;
   reply.mytype = order->pid;
@@ -73,6 +68,11 @@ static void serve_primi_secondi(struct SharedData *shm, ServingMsg *order) {
 
 static void serve_caffe(struct SharedData *shm, ServingMsg *order) {
   int sem_id = shm->sem_id;
+  int service_time =
+      random_service_time(shm->stations[target_station].avg_srvc,
+                          shm->stations[target_station].srvc_delta);
+
+  sim_sleep(service_time, shm->config.n_nano_secs);
   ServedMsg reply;
   reply.mytype = order->pid;
   reply.served = 1;
@@ -80,13 +80,14 @@ static void serve_caffe(struct SharedData *shm, ServingMsg *order) {
 
   send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
                MSG_CONTENT_SIZE(ServedMsg), 0);
-  sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
-  shm->sim_stats.dishes_coffee_today++;
-  sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
+  stats_record_dish_served(&shm->sim_stats, sem_id, STATION_COFFEE);
 }
 
 static void serve_cassa(struct SharedData *shm, OrderMsg *order) {
   int sem_id = shm->sem_id;
+  int service_time =
+      random_service_time(shm->stations[target_station].avg_srvc,
+                          shm->stations[target_station].srvc_delta);
 
   float total_primi_price = order->primi_ordered * shm->config.price_primi;
   float total_secondi_price =
@@ -95,10 +96,9 @@ static void serve_cassa(struct SharedData *shm, OrderMsg *order) {
 
   float total = total_primi_price + total_secondi_price + total_coffee_price;
 
-  sem_op(sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
-  shm->sim_stats.revenue_today += total;
-  sem_op(sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
+  stats_record_revenue(&shm->sim_stats, sem_id, total);
 
+  sim_sleep(service_time, shm->config.n_nano_secs);
   ServedMsg reply;
   reply.mytype = order->pid;
   reply.served = 1;
@@ -132,10 +132,8 @@ static void go_pause(struct SharedData *shm, int target_station) {
       shm->day_running) {
     nof_pause--;
     shm->stations[target_station].active_operators--;
-    
-    sem_op(shm->sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
-    shm->sim_stats.pauses_today++;
-    sem_op(shm->sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
+
+    stats_record_pause(&shm->sim_stats, shm->sem_id);
 
     sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
     sem_op(shm->sem_id, shm->stations[target_station].sem_seats_index, +1,
@@ -146,6 +144,7 @@ static void go_pause(struct SharedData *shm, int target_station) {
     sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     shm->stations[target_station].active_operators++;
     sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+    stats_record_active_operator(&shm->sim_stats, shm->sem_id);
     return;
   }
   sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
@@ -153,9 +152,6 @@ static void go_pause(struct SharedData *shm, int target_station) {
 
 static void run_workday(struct SharedData *shm) {
   while (shm->day_running) {
-    int service_time =
-        random_service_time(shm->stations[target_station].avg_srvc,
-                            shm->stations[target_station].srvc_delta);
 
     if (target_station == STATION_CASSA) {
       OrderMsg order;
@@ -163,7 +159,6 @@ static void run_workday(struct SharedData *shm) {
                       MSG_CONTENT_SIZE(OrderMsg))) {
         continue;
       }
-      sim_sleep(service_time, shm->config.n_nano_secs);
       serve_cassa(shm, &order);
     } else {
       ServingMsg order;
@@ -171,7 +166,6 @@ static void run_workday(struct SharedData *shm) {
                       MSG_CONTENT_SIZE(ServingMsg))) {
         continue;
       }
-      sim_sleep(service_time, shm->config.n_nano_secs);
       if (target_station == STATION_PRIMI ||
           target_station == STATION_SECONDI) {
         serve_primi_secondi(shm, &order);
@@ -197,7 +191,6 @@ int main(int argc, char *argv[]) {
   set_sigaction();
 
   seed = time(NULL) ^ getpid();
-
   nof_pause = shm->config.nof_pause;
 
   while (shm->simulation_running) {
@@ -210,6 +203,7 @@ int main(int argc, char *argv[]) {
       sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
       shm->stations[target_station].active_operators++;
       sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+      stats_record_active_operator(&shm->sim_stats, shm->sem_id);
     }
 
     run_workday(shm);

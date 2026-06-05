@@ -35,7 +35,13 @@ $(BIN_DIR)/operatore: $(BUILD_DIR)/operatore.o $(COMMON_OBJS)
 $(BIN_DIR)/utente: $(BUILD_DIR)/utente.o $(COMMON_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+CONF ?= conf/config.conf
+
 clean:
 	rm -rf $(BUILD_DIR)/*.o $(BIN_DIR)/*
 
-.PHONY: all clean dirs
+run: clean all
+	./bin/responsabile_mensa $(CONF)
+
+.PHONY: all clean dirs run
+

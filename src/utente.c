@@ -108,6 +108,9 @@ static int try_order(struct SharedData *shm, int *preferenze_type,
     return 0;
   }
 
+  struct timespec start_ts, end_ts;
+  clock_gettime(CLOCK_MONOTONIC, &start_ts);
+
   enter_queue(shm, station_type);
   ServingMsg order = {.pid = pid, .mytype = ORDER_TYPE};
   ServedMsg check_served = {.served = 0};
@@ -128,6 +131,12 @@ static int try_order(struct SharedData *shm, int *preferenze_type,
   }
 
   leave_queue(shm, station_type);
+
+  clock_gettime(CLOCK_MONOTONIC, &end_ts);
+  long diff_ns = (end_ts.tv_sec - start_ts.tv_sec) * 1000000000L + (end_ts.tv_nsec - start_ts.tv_nsec);
+  long sim_secs = (diff_ns * 60) / shm->config.n_nano_secs;
+  stats_record_wait_time(&shm->sim_stats, shm->sem_id, station_type, sim_secs);
+
   return check_served.served;
 }
 
@@ -137,6 +146,10 @@ static ServedMsg perform_cassa_payment(struct SharedData *shm,
     ServedMsg served = {.served = 0};
     return served;
   }
+
+  struct timespec start_ts, end_ts;
+  clock_gettime(CLOCK_MONOTONIC, &start_ts);
+
   enter_queue(shm, STATION_CASSA);
   OrderMsg order;
   order.primi_ordered = piatti_ordered[STATION_PRIMI];
@@ -154,6 +167,12 @@ static ServedMsg perform_cassa_payment(struct SharedData *shm,
   }
 
   leave_queue(shm, STATION_CASSA);
+
+  clock_gettime(CLOCK_MONOTONIC, &end_ts);
+  long diff_ns = (end_ts.tv_sec - start_ts.tv_sec) * 1000000000L + (end_ts.tv_nsec - start_ts.tv_nsec);
+  long sim_secs = (diff_ns * 60) / shm->config.n_nano_secs;
+  stats_record_wait_time(&shm->sim_stats, shm->sem_id, STATION_CASSA, sim_secs);
+
   return served;
 }
 
@@ -164,9 +183,7 @@ static void take_seat(struct SharedData *shm, int n_piatti) {
     sem_op(shm->sem_id, SEM_TABLE_SEATS, +1, 0);
   }
 
-  sem_op(shm->sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
-  shm->sim_stats.users_served_today++;
-  sem_op(shm->sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
+  stats_record_user_served(&shm->sim_stats, shm->sem_id);
 }
 
 static void run_routine(struct SharedData *shm) {
@@ -208,9 +225,7 @@ static void run_routine(struct SharedData *shm) {
   }
 
   if (ordered[STATION_PRIMI] == 0 && ordered[STATION_SECONDI] == 0) {
-    sem_op(shm->sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
-    shm->sim_stats.users_not_served_today++;
-    sem_op(shm->sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
+    stats_record_user_not_served(&shm->sim_stats, shm->sem_id);
     return;
   }
 
@@ -219,9 +234,7 @@ static void run_routine(struct SharedData *shm) {
                    ordered[STATION_COFFEE];
     take_seat(shm, n_piatti);
   } else {
-    sem_op(shm->sem_id, SEM_MUTEX_STATS, -1, SEM_UNDO);
-    shm->sim_stats.users_not_served_today++;
-    sem_op(shm->sem_id, SEM_MUTEX_STATS, +1, SEM_UNDO);
+    stats_record_user_not_served(&shm->sim_stats, shm->sem_id);
   }
 }
 
