@@ -1,0 +1,707 @@
+% =============================================================================
+% Relazione Finale — Progetto Sistemi Operativi 2025/26
+% Simulazione Mensa Universitaria (versione 24 CFU)
+% =============================================================================
+\documentclass[a4paper,12pt]{article}
+
+% --- Packages ----------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{amsmath}
+
+\geometry{margin=2.5cm}
+
+% --- Listings style ----------------------------------------------------------
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codecomment}{RGB}{0,128,0}
+\definecolor{codestring}{RGB}{163,21,21}
+\definecolor{codekeyword}{RGB}{0,0,180}
+
+\lstset{
+  language=C,
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{codekeyword}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  frame=single,
+  breaklines=true,
+  captionpos=b,
+  tabsize=4,
+  showstringspaces=false
+}
+
+% --- Metadata ----------------------------------------------------------------
+\title{%
+  \textbf{Relazione Finale}\\[0.3em]
+  \large Progetto di Sistemi Operativi 2025/26\\
+  Simulazione di una Mensa Universitaria\\[0.5em]
+  \normalsize Versione 24 CFU
+}
+\author{Ludovico Audenino}
+\date{\today}
+
+% =============================================================================
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Introduzione}
+% =============================================================================
+
+Il progetto realizza una simulazione multi-processo di una mensa universitaria.
+Il sistema modella il flusso degli utenti attraverso diverse stazioni di
+servizio (primi piatti, secondi piatti, caffè/dolci, cassa) e la gestione
+degli operatori che servono i clienti. Tutti i processi comunicano
+esclusivamente tramite meccanismi IPC System~V: \textbf{shared memory},
+\textbf{semafori} e \textbf{code di messaggi}.
+
+La simulazione è governata da un processo coordinatore
+(\texttt{responsabile\_mensa}) che orchestra il ciclo giornaliero,
+gestisce il rifornimento delle porzioni e monitora le condizioni
+di terminazione.
+
+% =============================================================================
+\section{Architettura Multi-Processo}
+% =============================================================================
+
+Il sistema è composto da tre tipologie di processi indipendenti,
+ciascuno compilato come eseguibile separato:
+
+\begin{enumerate}
+  \item \textbf{\texttt{responsabile\_mensa}} --- Il processo coordinatore
+        (padre). Crea tutte le risorse IPC, legge la configurazione,
+        genera i processi figli tramite \texttt{fork()} + \texttt{execve()},
+        e orchestra il ciclo di simulazione giorno per giorno.
+
+  \item \textbf{\texttt{operatore}} --- Ogni istanza rappresenta un
+        operatore assegnato a una specifica stazione. Riceve ordini
+        dalla coda messaggi della propria stazione, simula il tempo
+        di servizio, e invia la risposta all'utente.
+
+  \item \textbf{\texttt{utente}} --- Ogni istanza rappresenta un
+        cliente della mensa. Sceglie il menù, si mette in coda
+        alle stazioni (bilanciando il carico), paga alla cassa e
+        mangia al tavolo.
+\end{enumerate}
+
+\subsection{Ciclo di Vita del Coordinatore (Responsabile Mensa)}
+
+Il processo coordinatore (\texttt{responsabile\_mensa}) ha il compito di orchestrare l'intera simulazione, gestire le risorse condivise e verificare le condizioni di terminazione. Il suo ciclo di vita si articola nelle seguenti fasi:
+
+\begin{enumerate}
+  \item \textbf{Inizializzazione delle Risorse IPC}: Crea il segmento di shared memory, alloca il set di semafori e inizializza le code di messaggi per ciascuna stazione. Carica i parametri dal file di configurazione e dal file del menù.
+  \item \textbf{Generazione dei Processi Figli}: Esegue la creazione di \texttt{NOF\_WORKERS} operatori e \texttt{NOF\_USERS} utenti. Per ciascun processo, effettua una \texttt{fork()} seguita da \texttt{execve()} per caricare gli eseguibili dedicati (\texttt{bin/operatore} e \texttt{bin/utente}), passando come argomenti l'identificatore della memoria condivisa ed eventuali parametri specifici (come la stazione target per l'operatore).
+  \item \textbf{Barriera di Avvio}: Attende che tutti i processi figli abbiano completato l'inizializzazione e segnalato la propria prontezza tramite l'incremento del semaforo di barriera \texttt{SEM\_READY}. Il coordinatore esegue un'operazione semaforica bloccante con valore pari a \texttt{-TOTAL\_CHILDREN}.
+  \item \textbf{Ciclo Giornaliero}: Per ciascuno dei \texttt{SIM\_DURATION} giorni di simulazione:
+    \begin{enumerate}[label=\alph*)]
+      \item \textbf{Apertura del Giorno}: Ripristina le code dei messaggi per la nuova giornata (per evitare messaggi pendenti del giorno prima) e reimposta a zero i contatori delle code.
+      \item \textbf{Sblocco dei Figli}: Esegue un incremento di massa pari a \texttt{+TOTAL\_CHILDREN} sul semaforo \texttt{SEM\_DAY\_START}, consentendo a tutti i figli di iniziare le proprie routine giornaliere contemporaneamente.
+      \item \textbf{Rifornimento Periodico}: Durante la giornata, a intervalli regolari (es. ogni \texttt{AVG\_REFILL\_RATE} minuti simulati), simula l'arrivo di nuovi rifornimenti di cibo, incrementando le porzioni disponibili per i primi e secondi piatti in shared memory fino al limite massimo configurato (\texttt{MAX\_PORZIONI\_*}).
+      \item \textbf{Fine della Giornata}: Allo scadere del tempo simulato per la giornata, imposta il flag \texttt{day\_running = 0} e invia il segnale \texttt{SIGUSR1} a tutti i figli per sbloccare le chiamate di ricezione messaggi bloccanti. Successivamente, attende che tutti i figli tornino in stato di pronto incrementando \texttt{SEM\_READY}.
+      \item \textbf{Controllo Overload}: Verifica se il numero complessivo di utenti rimasti in coda supera la soglia di overload configurata (\texttt{OVERLOAD\_THRESHOLD}). In caso affermativo, imposta la causa di terminazione ad Overload ed arresta la simulazione.
+      \item \textbf{Report Giornaliero}: Elabora le statistiche raccolte in shared memory relative alla giornata appena conclusa e le stampa a schermo.
+    \end{enumerate}
+  \item \textbf{Shutdown e Pulizia}: Al termine del ciclo di simulazione (o in seguito a interruzioni da segnali esterni), imposta \texttt{simulation\_running = 0}, rilascia i figli in attesa ed esegue una \texttt{waitpid()} su tutti i processi figli per evitarne la permanenza in stato zombie. Infine, distrugge tutte le risorse IPC create (shared memory, semafori, code di messaggi).
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  process/.style={rectangle, draw, rounded corners, minimum width=3.5cm,
+                  minimum height=1cm, text centered, font=\small},
+  arrow/.style={->, thick, >=stealth},
+  every node/.style={font=\small}
+]
+  % Coordinator
+  \node[process, fill=blue!15] (coord) at (0,0)
+    {\texttt{responsabile\_mensa}};
+
+  % Operators
+  \node[process, fill=orange!15] (op1) at (-4,-2.5)
+    {\texttt{operatore [0]}};
+  \node[process, fill=orange!15] (op2) at (-1.3,-2.5)
+    {\texttt{operatore [1]}};
+  \node[font=\large] at (1.3,-2.5) {$\cdots$};
+  \node[process, fill=orange!15] (opN) at (4,-2.5)
+    {\texttt{operatore [N]}};
+
+  % Users
+  \node[process, fill=green!15] (u1) at (-4,-5)
+    {\texttt{utente [0]}};
+  \node[process, fill=green!15] (u2) at (-1.3,-5)
+    {\texttt{utente [1]}};
+  \node[font=\large] at (1.3,-5) {$\cdots$};
+  \node[process, fill=green!15] (uM) at (4,-5)
+    {\texttt{utente [M]}};
+
+  % Arrows
+  \draw[arrow] (coord) -- (op1) node[midway, left] {fork+exec};
+  \draw[arrow] (coord) -- (op2);
+  \draw[arrow] (coord) -- (opN);
+  \draw[arrow] (coord) -- (u1);
+  \draw[arrow] (coord) -- (u2);
+  \draw[arrow] (coord) -- (uM) node[midway, right] {fork+exec};
+
+  % Shared memory
+  \node[rectangle, draw, dashed, fill=yellow!10, minimum width=10cm,
+        minimum height=0.8cm] (shm) at (0,-7.2)
+    {\textbf{Shared Memory} (SharedData)};
+  \draw[<->, dashed, gray] (op1.south) -- ++(0,-1.7) -- (shm.west);
+  \draw[<->, dashed, gray] (uM.south) -- ++(0,-0.2) -- (shm.east);
+\end{tikzpicture}
+\caption{Architettura multi-processo della simulazione.}
+\end{figure}
+
+\subsection{Ciclo di Vita dell'Operatore}
+
+I processi \texttt{operatore} rappresentano il personale addetto al servizio presso le stazioni di cibo (primi piatti, secondi piatti, caffè/dolci) o alla cassa per i pagamenti. Ciascun operatore esegue le seguenti fasi durante il suo ciclo di vita:
+
+\begin{enumerate}
+  \item \textbf{Inizializzazione}: Riceve all'avvio (tramite argomenti di riga di comando) il descrittore della shared memory (\texttt{shm\_id}) e l'indice della stazione a cui è stato assegnato dal coordinatore (\texttt{target\_station}). Si collega alla shared memory, imposta l'handler per il segnale \texttt{SIGUSR1} (necessario per interrompere le letture bloccanti dalle code messaggi) e inizializza il proprio seme per la generazione di numeri casuali basandosi sul PID.
+  \item \textbf{Sincronizzazione Giornaliera}: All'inizio di ogni giornata, l'operatore:
+    \begin{enumerate}[label=\alph*)]
+      \item Segnala di essere pronto incrementando il semaforo \texttt{SEM\_READY} (\texttt{sem\_op(+1)}).
+      \item Si blocca in attesa del segnale di avvio della giornata sul semaforo \texttt{SEM\_DAY\_START} (\texttt{sem\_op(-1)}).
+    \end{enumerate}
+  \item \textbf{Presa di Servizio alla Stazione}: Acquisisce un posto fisico presso la stazione target eseguendo una \texttt{sem\_op(-1)} sul semaforo associato alla stazione (\texttt{SEM\_SEATS\_*}). Una volta ottenuto il posto, accede alla shared memory per incrementare in mutua esclusione (\texttt{SEM\_MUTEX\_SHM}) il contatore degli operatori attivi alla stazione (\texttt{active\_operators}).
+  \item \textbf{Ciclo di Servizio}: Fino a quando la giornata è attiva (\texttt{day\_running == 1}), l'operatore esegue un ciclo continuo in cui:
+    \begin{enumerate}[label=\alph*)]
+      \item \textbf{Attesa dell'Ordine}: Esegue una chiamata bloccante \texttt{msgrcv()} sulla coda messaggi della propria stazione.
+      \item \textbf{Erogazione del Servizio}: Se la stazione serve cibo (primi/secondi), controlla la disponibilità delle porzioni per il piatto richiesto sotto la protezione del mutex delle porzioni (\texttt{SEM\_MUTEX\_PORZIONI\_P} o \texttt{SEM\_MUTEX\_PORZIONI\_S}). Se disponibile, decrementa la porzione, simula il tempo di servizio eseguendo una sospensione proporzionale al tempo medio (\texttt{AVG\_SRVC\_*}) e risponde all'utente con successo (\texttt{served = 1}). Se le porzioni sono esaurite, risponde immediatamente all'utente segnalando il fallimento (\texttt{served = 0}) senza simulare alcun tempo di servizio.
+      \item \textbf{Erogazione Caffè e Cassa}: Nel caso del caffè (porzioni illimitate) o della cassa, l'operatore simula il servizio e risponde sempre con successo. Per la cassa, l'operatore calcola inoltre l'importo totale dovuto basandosi sui piatti consumati dal cliente ed aggiorna in mutua esclusione la statistica degli incassi giornalieri.
+      \item \textbf{Invio Risposta}: La risposta (\texttt{ServedMsg}) viene inviata sulla coda di risposta comune con tipo di messaggio (\texttt{mtype}) impostato al PID dell'utente richiedente.
+      \item \textbf{Gestione delle Pause}: Dopo ogni servizio completato, l'operatore calcola una probabilità del 15\% di prendere una pausa. La pausa è consentita solo se ci sono ancora pause disponibili nella sua quota giornaliera (\texttt{nof\_pause > 0}) e se la stazione non viene lasciata sguarnita (ovvero se vi è almeno un altro operatore attivo nella medesima stazione). Durante la pausa, l'operatore decrementa il contatore degli operatori attivi in shared memory, rilascia temporaneamente il posto fisico della stazione (\texttt{sem\_op(+1)} sul relativo semaforo), simula la pausa (\texttt{WORKER\_PAUSE} minuti simulati) e infine riacquisisce il posto (\texttt{sem\_op(-1)}) ed aggiorna lo stato.
+    \end{enumerate}
+  \item \textbf{Chiusura della Giornata}: Quando il coordinatore imposta \texttt{day\_running = 0} e invia il segnale \texttt{SIGUSR1}, la chiamata bloccante \texttt{msgrcv()} dell'operatore fallisce con errore \texttt{EINTR}. L'operatore rileva che la giornata è conclusa, esce dal ciclo di servizio, decrementa gli operatori attivi, rilascia il posto stazione ed attende la giornata successiva o la terminazione.
+\end{enumerate}
+
+\subsection{Ciclo di Vita dell'Utente}
+
+I processi \texttt{utente} simulano i clienti della mensa che entrano, scelgono il cibo, si mettono in coda alle stazioni, pagano ed infine consumano il pasto ai tavoli. Il loro ciclo di vita comprende le seguenti fasi:
+
+\begin{enumerate}
+  \item \textbf{Inizializzazione}: Riceve all'avvio il descrittore della shared memory (\texttt{shm\_id}). Si collega alla memoria condivisa, registra il proprio handler per \texttt{SIGUSR1} e ricava il proprio PID.
+  \item \textbf{Sincronizzazione Giornaliera}: Come gli operatori, partecipa alla barriera di inizio giornata incrementando \texttt{SEM\_READY} e attendendo su \texttt{SEM\_DAY\_START}.
+  \item \textbf{Scelta del Menù}: All'avvio della giornata, l'utente genera le proprie preferenze casuali per il cibo e decide se consumare o meno il caffè.
+  \item \textbf{Routine di Servizio}: L'utente visita sequenzialmente le stazioni di cibo di suo interesse (primi, secondi, caffè) scegliendo l'ordine di visita in base alle lunghezze delle code al fine di minimizzare il tempo d'attesa.
+  \item \textbf{Pagamento e Consumazione}: Una volta terminato il giro delle stazioni alimentari, l'utente si sposta alla cassa per saldare il conto ed infine tenta di sedersi ad un tavolo per mangiare.
+  \item \textbf{Uscita}: Concluso il pasto (o in caso di fallimento del servizio per mancanza di cibo o chiusura anticipata), l'utente aggiorna le statistiche globali (tempo di attesa, stato del servizio) e ritorna alla barriera per la giornata successiva.
+\end{enumerate}
+
+\subsection{Algoritmi di Scelta e Comportamento dell'Utente}
+
+L'utente adotta strategie specifiche per l'ordinamento delle preferenze, il bilanciamento del carico tra le code e la gestione delle situazioni anomale.
+
+\subsubsection{Scelta del Menù e Preferenze (Algoritmo Fisher-Yates)}
+All'inizio della giornata, l'utente determina le proprie preferenze per ciascuna tipologia di piatto. Poiché il menù offre molteplici varianti per i primi e i secondi piatti (lette dal file \texttt{conf/menu.txt}), l'utente deve decidere l'ordine in cui preferisce consumarle. 
+Questo ordinamento viene generato in modo casuale ed imparziale inizializzando un array con gli indici consecutivi dei piatti disponibili (da $0$ a $N-1$) e applicando l'algoritmo di \textbf{Fisher-Yates shuffle}:
+\begin{lstlisting}[caption={Algoritmo di Fisher-Yates per la scelta dei piatti.}]
+void fisher_yates_shuffle(int *array, int n) {
+  for (int i = n - 1; i > 0; i--) {
+    int j = rand_r(&seed) % (i + 1);
+    int temp = array[i];
+    array[i] = array[j];
+    array[j] = temp;
+  }
+}
+\end{lstlisting}
+Questo garantisce che ogni possibile combinazione di preferenze abbia la stessa probabilità di essere generata, modellando comportamenti d'acquisto realistici. Successivamente, viene calcolata una probabilità del 25\% per determinare se l'utente desidera consumare anche il caffè/dolce (\texttt{want\_coffee = 1}).
+
+\subsubsection{Accodamento Dinamico Bilanciato (Shortest Queue First)}
+Durante la permanenza nella mensa, l'utente deve visitare le stazioni pianificate: primi piatti, secondi piatti e, se desiderato, caffè. Per evitare colli di bottiglia e ottimizzare il flusso all'interno del locale, l'utente non segue un ordine fisso di stazioni (es. prima primi, poi secondi), ma valuta dinamicamente lo stato delle code in quel momento.
+
+L'utente esamina le code delle stazioni non ancora visitate e sceglie di accodarsi presso quella che presenta la lunghezza della coda più corta in assoluto (\textit{Shortest Queue First}). Per evitare race condition in cui più utenti scelgono contemporaneamente la stessa stazione alterandone lo stato prima che questo sia registrato, la lettura delle lunghezze delle code (\texttt{queue\_length}) e l'incremento del contatore della stazione scelta avvengono in modo strettamente atomico all'interno di una sezione critica protetta dal semaforo mutex globale della shared memory \texttt{SEM\_MUTEX\_SHM}:
+\begin{lstlisting}[caption={Selezione della stazione con coda minore.}]
+int min_queue = INT_MAX;
+int target_station = -1;
+sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+for (int i = 0; i < 3; i++) {
+  if (station_done[i] == 0) {
+    int station_queue = shm->stations[i].queue_length;
+    if (station_queue < min_queue) {
+      min_queue = station_queue;
+      target_station = i;
+    }
+  }
+}
+if (target_station != -1) {
+  shm->stations[target_station].queue_length++;
+}
+sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+\end{lstlisting}
+
+\subsubsection{Comportamento in caso di Esaurimento Porzioni}
+Quando l'utente giunge in testa alla coda di una stazione di cibo, invia un messaggio di richiesta (\texttt{ServingMsg}) indicando la sua prima preferenza (l'elemento a indice 0 dell'array delle preferenze).
+L'operatore verifica se vi sono porzioni disponibili per tale piatto. Possono verificarsi due scenari:
+\begin{itemize}
+  \item \textbf{Porzione disponibile}: L'operatore decrementa il contatore delle porzioni in shared memory, serve l'utente (simulando il tempo di servizio) e risponde con successo (\texttt{served = 1}).
+  \item \textbf{Porzione esaurita}: L'operatore risponde immediatamente con un fallimento (\texttt{served = 0}) senza simulare attese. L'utente riceve il rifiuto e, rimanendo in coda, invia immediatamente una nuova richiesta per il piatto successivo nella propria lista di preferenze (l'elemento a indice 1).
+\end{itemize}
+Questo ciclo di tentativi prosegue finché l'utente non ottiene un piatto con successo o non esaurisce tutte le opzioni disponibili per quella stazione. Se tutte le opzioni del menù per quella stazione sono esaurite (ad esempio sono stati esauriti tutti i tipi di primi piatti), l'utente abbandona la stazione senza aver ottenuto cibo (\texttt{ordered[station] = 0}).
+
+\subsubsection{Comportamento in caso di Mancato Servizio (Not Served Path)}
+La politica della mensa impone che un utente debba consumare un pasto principale per poter completare la sua routine. Se l'utente, dopo aver tentato il servizio alle stazioni dei primi e dei secondi piatti, si ritrova con \textbf{entrambi i piatti non serviti} (\texttt{ordered[STATION\_PRIMI] == 0 \&\& ordered[STATION\_SECONDI] == 0}), decide di non recarsi alla cassa e di non occupare un tavolo.
+L'utente abbandona quindi la mensa e registra l'evento aggiornando in mutua esclusione la statistica dei clienti non serviti tramite la funzione \texttt{stats\_record\_user\_not\_served()}.
+
+Analogamente, se l'utente ha ottenuto almeno un piatto ma la transazione di pagamento alla cassa fallisce (ad esempio perché la coda messaggi della cassa viene distrutta a fine giornata prima che l'operatore possa elaborare la transazione), l'utente non può consumare il cibo. Anche in questo caso si attiva il percorso di fallimento, registrando l'utente come non servito e liberando le risorse.
+
+\subsubsection{Consumazione al Tavolo}
+Se l'utente ha ottenuto con successo almeno un piatto principale e ha completato con successo il pagamento alla cassa, procede verso l'area tavoli.
+L'utente tenta di acquisire un posto eseguendo una \texttt{sem\_op(-1)} sul semaforo contatore \texttt{SEM\_TABLE\_SEATS}, inizializzato alla capacità massima dei tavoli. Se tutti i posti sono occupati, il processo utente si blocca finché un tavolo non si libera. Una volta seduto, l'utente simula il tempo necessario per consumare il pasto tramite una \texttt{sim\_sleep()} proporzionale al numero di piatti effettivamente ottenuti (2 secondi simulati per piatto). Al termine, rilascia il posto con una \texttt{sem\_op(+1)} e registra il successo del servizio aggiornando le statistiche complessive.
+
+\subsubsection{Chiusura Anticipata della Giornata (Fine Servizio)}
+La giornata lavorativa della mensa ha una durata temporale definita. Quando la giornata giunge al termine, il coordinatore imposta il flag globale \texttt{day\_running = 0} in shared memory e invia il segnale \texttt{SIGUSR1} a tutti i processi figli attivi.
+Gli utenti gestiscono questa interruzione in modo sicuro controllando il flag di uscita e lo stato della giornata prima di effettuare operazioni bloccanti (come l'invio di un messaggio sulla coda o l'attesa di una risposta):
+\begin{lstlisting}[caption={Controllo di terminazione giornaliera nel ciclo utente.}]
+if (should_exit || !shm->day_running) {
+    break;
+}
+\end{lstlisting}
+Se il segnale viene ricevuto mentre l'utente è in attesa di un messaggio, la chiamata di sistema viene interrotta (\texttt{EINTR}), la condizione di uscita viene rilevata, e l'utente abbandona le code decrementando correttamente la lunghezza delle code in shared memory (\texttt{leave\_queue()}) grazie alla protezione \texttt{SEM\_UNDO}. In questo modo si evitano stalli o blocchi indefiniti dei processi e si garantisce una transizione pulita verso la giornata successiva o verso lo shutdown definitivo della simulazione.
+
+
+% =============================================================================
+\section{Meccanismi IPC Scelti e Motivazioni}
+% =============================================================================
+
+La comunicazione inter-processo si basa interamente su \textbf{System~V IPC},
+come richiesto dalle specifiche. Le tre primitive utilizzate sono:
+
+\subsection{Shared Memory}
+
+Un singolo segmento di shared memory contiene la struttura
+\texttt{SharedData}, che include:
+
+\begin{itemize}
+  \item Flag di controllo (\texttt{simulation\_running},
+        \texttt{day\_running}, \texttt{current\_day},
+        \texttt{termination\_cause}).
+  \item Stato delle stazioni (\texttt{StationData stations[4]}):
+        lunghezza coda, operatori attivi, porzioni rimanenti,
+        tempi di servizio.
+  \item Identificatori delle code di messaggi e dei semafori.
+  \item Statistiche della simulazione (\texttt{SimStats}).
+  \item Configurazione (\texttt{Config}).
+\end{itemize}
+
+\textbf{Motivazione}: la shared memory è il meccanismo più efficiente
+per condividere grandi quantità di dati strutturati tra processi.
+Lo stato delle stazioni, le statistiche e la configurazione devono
+essere accessibili da tutti i processi con latenza minima.
+
+\subsection{Semafori}
+
+Viene creato un set di \textbf{11 semafori} con le seguenti funzioni:
+
+\begin{table}[H]
+\centering
+\caption{Set di semafori System~V.}
+\begin{tabular}{@{}llp{7.5cm}@{}}
+\toprule
+\textbf{Indice} & \textbf{Nome} & \textbf{Scopo} \\
+\midrule
+0  & \texttt{SEM\_MUTEX\_SHM}       & Mutua esclusione per accesso in scrittura a \texttt{SharedData} \\
+1  & \texttt{SEM\_SEATS\_PRIMI}     & Contatore posti operatore alla stazione primi \\
+2  & \texttt{SEM\_SEATS\_SECONDI}   & Contatore posti operatore alla stazione secondi \\
+3  & \texttt{SEM\_SEATS\_COFFEE}    & Contatore posti operatore alla stazione caffè \\
+4  & \texttt{SEM\_SEATS\_CASSA}     & Contatore posti operatore alla cassa \\
+5  & \texttt{SEM\_TABLE\_SEATS}     & Contatore posti tavolo disponibili \\
+6  & \texttt{SEM\_READY}            & Barriera di sincronizzazione figli \\
+7  & \texttt{SEM\_DAY\_START}       & Segnale di inizio giornata \\
+8  & \texttt{SEM\_MUTEX\_STATS}     & Mutua esclusione per aggiornamento statistiche \\
+9  & \texttt{SEM\_MUTEX\_PORZIONI\_P} & Mutex per decremento porzioni primi \\
+10 & \texttt{SEM\_MUTEX\_PORZIONI\_S} & Mutex per decremento porzioni secondi \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Motivazione}: i semafori System~V permettono di implementare
+sia mutex binari (inizializzati a~1) sia contatori di risorse
+(inizializzati alla capacità). Il flag \texttt{SEM\_UNDO} garantisce
+il rilascio automatico in caso di terminazione anomala, prevenendo
+deadlock residui.
+
+\subsection{Code di Messaggi}
+
+Sono utilizzate \textbf{5 code di messaggi}:
+\begin{itemize}
+  \item \textbf{4 code di richiesta} (una per stazione): gli utenti
+        inviano ordini (\texttt{ServingMsg} o \texttt{OrderMsg}) alla
+        coda della stazione desiderata.
+  \item \textbf{1 coda di risposta} (comune): gli operatori inviano
+        le risposte (\texttt{ServedMsg}) indirizzate al PID dell'utente
+        tramite il campo \texttt{mtype}.
+\end{itemize}
+
+\textbf{Motivazione}: le code di messaggi garantiscono un disaccoppiamento
+naturale tra produttore (utente) e consumatore (operatore). Il filtraggio
+per \texttt{mtype} permette di instradare le risposte al corretto processo
+utente senza strutture dati condivise aggiuntive.
+
+Le code vengono \textbf{ricreate ogni giornata} per evitare che messaggi
+residui della giornata precedente inquinino la successiva.
+
+% =============================================================================
+\section{Politica di Assegnazione Operatori}
+% =============================================================================
+
+Gli operatori vengono assegnati alle stazioni all'avvio della simulazione
+secondo una politica a due fasi implementata nella funzione
+\texttt{get\_target\_station()}:
+
+\subsection{Fase 1: Assegnazione Garantita}
+
+I primi \texttt{NUM\_STATIONS} (4) operatori vengono assegnati
+uno per stazione, in ordine di priorità decrescente basato sul
+tempo medio di servizio (\texttt{avg\_srvc}). La stazione più
+lenta riceve il primo operatore.
+
+\subsection{Fase 2: Distribuzione Bilanciata}
+
+Gli operatori successivi vengono distribuiti con un criterio di
+bilanciamento pesato. Per ciascun operatore aggiuntivo, si sceglie
+la stazione che massimizza il rapporto:
+
+\[
+\text{best} = \arg\max_{j} \frac{\texttt{avg\_srvc}[j]}{\texttt{assigned}[j]}
+\]
+
+Questo approccio garantisce che le stazioni con tempi di servizio
+più elevati ricevano proporzionalmente più operatori.
+
+\subsection{Ordinamento per Priorità}
+
+L'ordinamento viene effettuato tramite la funzione
+\texttt{sort\_station\_priority()}, che implementa un
+\textit{selection sort} sull'array di indici delle stazioni,
+producendo un vettore di indirizzamento indiretto che non modifica
+l'array originale in shared memory.
+
+% =============================================================================
+\section{Gestione della Sincronizzazione e della Concorrenza}
+% =============================================================================
+
+La sincronizzazione è il cuore del sistema e si articola su più livelli:
+
+\subsection{Barriera di Sincronizzazione}
+
+Il coordinatore e i processi figli si sincronizzano tramite una barriera
+a due fasi implementata con i semafori \texttt{SEM\_READY} e
+\texttt{SEM\_DAY\_START}:
+
+\begin{enumerate}
+  \item Ogni figlio incrementa \texttt{SEM\_READY} (+1) per segnalare
+        la propria disponibilità.
+  \item Il coordinatore esegue
+        \texttt{sem\_op(SEM\_READY, -TOTAL\_CHILDREN)} per attendere
+        che tutti i figli siano pronti.
+  \item Il coordinatore prepara la giornata e poi esegue
+        \texttt{sem\_op(SEM\_DAY\_START, +TOTAL\_CHILDREN)} per
+        sbloccare tutti i figli simultaneamente.
+  \item Ogni figlio esegue \texttt{sem\_op(SEM\_DAY\_START, -1)}
+        per attendere il via.
+\end{enumerate}
+
+Questo meccanismo garantisce che nessun figlio inizi ad operare
+prima che tutte le risorse del giorno siano pronte.
+
+\subsection{Sezioni Critiche}
+
+L'accesso concorrente alla shared memory è protetto da mutex
+dedicati:
+
+\begin{itemize}
+  \item \texttt{SEM\_MUTEX\_SHM}: protegge lo stato globale
+        (flag di controllo, lunghezze code, contatori operatori).
+  \item \texttt{SEM\_MUTEX\_STATS}: protegge gli aggiornamenti
+        delle statistiche (\texttt{SimStats}).
+  \item \texttt{SEM\_MUTEX\_PORZIONI\_P/S}: proteggono il
+        decremento delle porzioni per primi e secondi,
+        separatamente dal mutex principale per ridurre
+        la contesa.
+\end{itemize}
+
+\subsection{Gestione delle Risorse con Semafori Contatore}
+
+I semafori \texttt{SEM\_SEATS\_*} e \texttt{SEM\_TABLE\_SEATS}
+agiscono come contatori di risorse limitate:
+
+\begin{itemize}
+  \item Gli operatori eseguono \texttt{sem\_op(-1)} per acquisire
+        un posto alla stazione e \texttt{sem\_op(+1)} per rilasciarlo.
+  \item Gli utenti eseguono \texttt{sem\_op(-1)} su
+        \texttt{SEM\_TABLE\_SEATS} per sedersi al tavolo.
+  \item I valori iniziali corrispondono alle capacità configurate.
+\end{itemize}
+
+\subsection{Bilanciamento del Carico Utente}
+
+Gli utenti selezionano la stazione con la coda più corta
+(\textit{shortest queue first}) tramite lettura atomica dei
+contatori \texttt{queue\_length} protetta da \texttt{SEM\_MUTEX\_SHM}.
+L'incremento della coda avviene nella stessa sezione critica per
+evitare race condition.
+
+\subsection{Pause Operatore}
+
+Un operatore può prendere una pausa solo se:
+\begin{itemize}
+  \item Ci sono almeno 2 operatori attivi alla stazione (per non
+        lasciare la stazione scoperta).
+  \item Ha ancora pause disponibili (\texttt{nof\_pause > 0}).
+  \item La giornata è ancora in corso (\texttt{day\_running}).
+\end{itemize}
+
+Durante la pausa, l'operatore rilascia il proprio posto alla stazione
+(\texttt{sem\_op(+1)}) e lo riacquisisce al termine
+(\texttt{sem\_op(-1)}).
+
+% =============================================================================
+\section{Gestione della Terminazione}
+% =============================================================================
+
+La simulazione può terminare per tre cause distinte:
+
+\subsection{Timeout (Causa 0)}
+
+La simulazione ha completato tutti i \texttt{SIM\_DURATION} giorni
+configurati. Il coordinatore esce dal ciclo giornaliero e avvia
+lo shutdown graceful.
+
+\subsection{Overload (Causa 1)}
+
+A fine giornata, il coordinatore somma le lunghezze di tutte le
+code e confronta il totale con \texttt{OVERLOAD\_THRESHOLD}. Se
+il numero di utenti in attesa supera la soglia:
+
+\begin{lstlisting}
+int total_queued = 0;
+for (int j = 0; j < NUM_STATIONS; j++) {
+    total_queued += shm->stations[j].queue_length;
+}
+if (total_queued > shm->config.overload_threshold) {
+    shm->termination_cause = 1;
+    shm->simulation_running = 0;
+}
+\end{lstlisting}
+
+\subsection{Segnale Esterno --- SIGINT (Causa 2)}
+
+Il coordinatore installa un handler per \texttt{SIGINT} e
+\texttt{SIGTERM} che:
+\begin{enumerate}
+  \item Imposta \texttt{simulation\_running = 0}.
+  \item Invia \texttt{SIGINT} a tutti i processi figli.
+  \item Attende la terminazione dei figli con \texttt{waitpid()}.
+  \item Invoca \texttt{exit()}, che attiva \texttt{atexit(cleanup\_ipc)}
+        per la pulizia delle risorse IPC.
+\end{enumerate}
+
+\subsection{Shutdown Graceful}
+
+La procedura di shutdown (\texttt{execute\_graceful\_shutdown()}) garantisce
+una terminazione ordinata:
+
+\begin{enumerate}
+  \item Il coordinatore imposta \texttt{simulation\_running = 0}.
+  \item Invia \texttt{SIGUSR1} a tutti i figli per interrompere
+        eventuali \texttt{msgrcv()} bloccanti.
+  \item Incrementa \texttt{SEM\_DAY\_START} per sbloccare i figli
+        in attesa della prossima giornata.
+  \item I figli controllano \texttt{simulation\_running} e terminano.
+  \item Il coordinatore raccoglie tutti i figli con \texttt{waitpid()}.
+  \item Le risorse IPC vengono rilasciate da \texttt{cleanup\_ipc()}
+        registrata con \texttt{atexit()}.
+\end{enumerate}
+
+% =============================================================================
+\section{Struttura dei File di Configurazione}
+% =============================================================================
+
+\subsection{Formato Generale}
+
+I parametri di configurazione vengono letti da file con formato
+\texttt{CHIAVE = VALORE}, uno per riga. Le righe vuote e i commenti
+(prefisso \texttt{\#}) vengono ignorati. Il parser è implementato in
+\texttt{config.c} tramite la funzione \texttt{parse\_config()}.
+
+Se non viene specificato un file da riga di comando, il sistema cerca
+la variabile d'ambiente \texttt{MENSA\_CONFIG}; in sua assenza, utilizza
+il percorso predefinito \texttt{conf/config.conf}.
+
+\subsection{Parametri di Configurazione}
+
+\begin{table}[H]
+\centering
+\caption{Parametri di configurazione disponibili.}
+\small
+\begin{tabular}{@{}lp{8cm}@{}}
+\toprule
+\textbf{Parametro} & \textbf{Descrizione} \\
+\midrule
+\texttt{SIM\_DURATION}       & Durata della simulazione in giorni \\
+\texttt{N\_NANO\_SECS}       & Nanosecondi reali per minuto simulato \\
+\texttt{NOF\_WORKERS}        & Numero totale di operatori \\
+\texttt{NOF\_USERS}          & Numero totale di utenti \\
+\texttt{NOF\_WK\_SEATS\_*}   & Capacità coda per ciascuna stazione \\
+\texttt{NOF\_TABLE\_SEATS}   & Posti tavolo disponibili \\
+\texttt{AVG\_SRVC\_*}        & Tempo medio di servizio per stazione (sec.\ simulati) \\
+\texttt{AVG\_REFILL\_*}      & Porzioni iniziali/rifornimento per primi e secondi \\
+\texttt{MAX\_PORZIONI\_*}    & Limite massimo porzioni per tipo \\
+\texttt{NOF\_PAUSE}          & Pause consentite per operatore \\
+\texttt{PRICE\_*}            & Prezzi per piatto \\
+\texttt{OVERLOAD\_THRESHOLD} & Soglia utenti in coda per terminazione overload \\
+\texttt{MENU\_FILE}          & Percorso del file menù \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{File Menù}
+
+Il file \texttt{conf/menu.txt} definisce i piatti disponibili con il
+formato \texttt{TIPO:NOME\_PIATTO}. I tipi riconosciuti sono
+\texttt{PRIMO}, \texttt{SECONDO}, \texttt{COFFEE} e \texttt{DOLCE}.
+Il parser conta il numero di varianti per primi e secondi, determinando
+la dimensione degli array \texttt{portion\_left[]}.
+
+\subsection{Configurazioni di Consegna}
+
+Sono fornite due configurazioni specifiche, come richiesto dalle specifiche:
+
+\begin{description}
+  \item[\texttt{config\_timeout.conf}] --- Configurazione che produce
+    terminazione per \textbf{timeout}. Imposta
+    \texttt{OVERLOAD\_THRESHOLD = 999} (irraggiungibile), servizi
+    veloci e un numero moderato di utenti (10), garantendo che la
+    simulazione completi tutti e 3 i giorni previsti senza mai
+    raggiungere la soglia di overload.
+
+  \item[\texttt{config\_overload.conf}] --- Configurazione che produce
+    terminazione per \textbf{overload}. Imposta
+    \texttt{OVERLOAD\_THRESHOLD = 5} e tempi di servizio molto elevati
+    (500 sec simulati per primi e secondi) con 100 utenti. Il numero
+    di utenti in attesa alla fine del primo giorno supera ampiamente la
+    soglia, causando terminazione immediata.
+\end{description}
+
+% =============================================================================
+\section{Compilazione e Utilizzo}
+% =============================================================================
+
+\subsection{Requisiti}
+
+\begin{itemize}
+  \item GCC con supporto C99/C11
+  \item GNU Make
+  \item Sistema operativo Linux con supporto System~V IPC
+\end{itemize}
+
+\subsection{Compilazione}
+
+\begin{lstlisting}[language=bash, caption={Compilazione del progetto.}]
+make clean all
+\end{lstlisting}
+
+Il Makefile compila tre eseguibili in \texttt{bin/}:
+\texttt{responsabile\_mensa}, \texttt{operatore}, \texttt{utente}.
+I flag di compilazione includono \texttt{-Wvla -Wextra -Werror}
+per garantire zero warning.
+
+\subsection{Esecuzione}
+
+\begin{lstlisting}[language=bash, caption={Esecuzione con configurazione specifica.}]
+# Esecuzione con config di default
+make run
+
+# Terminazione per timeout
+make run CONF=conf/config_timeout.conf
+
+# Terminazione per overload
+make run CONF=conf/config_overload.conf
+
+# Esecuzione diretta
+./bin/responsabile_mensa conf/config_timeout.conf
+\end{lstlisting}
+
+\subsection{Pulizia Risorse IPC}
+
+In caso di terminazione anomala (es.\ \texttt{kill -9}), le risorse
+IPC potrebbero rimanere allocate. Per verificare e rimuoverle:
+
+\begin{lstlisting}[language=bash, caption={Pulizia risorse IPC residue.}]
+# Verifica risorse IPC
+ipcs
+
+# Rimozione manuale
+ipcrm -a
+\end{lstlisting}
+
+% =============================================================================
+\section{Struttura del Progetto}
+% =============================================================================
+
+\begin{lstlisting}[language=bash, caption={Struttura della directory del progetto.}]
+SO_Project/
+|-- Makefile
+|-- conf/
+|   |-- config.conf              # Configurazione di default
+|   |-- config_timeout.conf      # Terminazione per timeout
+|   |-- config_overload.conf     # Terminazione per overload
+|   '-- menu.txt                 # Menu della mensa
+|-- include/
+|   |-- common.h                 # Costanti e macro globali
+|   |-- config.h                 # Struttura Config e parser
+|   |-- ipc_utils.h              # Wrapper IPC System V
+|   |-- shared_data.h            # SharedData e StationData
+|   |-- stats.h                  # SimStats e funzioni report
+|   '-- time_utils.h             # Conversioni tempo simulato
+|-- src/
+|   |-- responsabile_mensa.c     # Processo coordinatore
+|   |-- operatore.c              # Processo operatore
+|   |-- utente.c                 # Processo utente
+|   |-- config.c                 # Parser configurazione
+|   |-- ipc_utils.c              # Implementazione wrapper IPC
+|   |-- time_utils.c             # Implementazione tempo
+|   '-- stats.c                  # Implementazione statistiche
+|-- bin/                         # Eseguibili compilati
+|-- build/                       # File oggetto compilati
+'-- relazione_finale/
+    '-- relazione.tex            # Questa relazione
+\end{lstlisting}
+
+% =============================================================================
+\section{Conclusioni}
+% =============================================================================
+
+Il progetto implementa con successo una simulazione multi-processo di
+una mensa universitaria utilizzando esclusivamente meccanismi IPC
+System~V. Le scelte architetturali principali --- un singolo segmento
+di shared memory, semafori con \texttt{SEM\_UNDO} per la robustezza,
+e code di messaggi con filtraggio per PID --- garantiscono correttezza,
+assenza di deadlock e pulizia automatica delle risorse anche in caso
+di terminazione anomala.
+
+La separazione dei mutex (generale, statistiche, porzioni) riduce la
+contesa tra processi, mentre la politica di assegnazione pesata degli
+operatori ottimizza i tempi di servizio. Le due configurazioni fornite
+dimostrano il corretto funzionamento di entrambe le condizioni di
+terminazione previste dalle specifiche.
+
+\end{document}
