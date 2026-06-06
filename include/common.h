@@ -30,18 +30,19 @@
 /**
  * @name Message Type Identifiers
  * Used to route messages to specific stations and retrieve them by PID.
+ * Each station has its own dedicated message queue, so a single type
+ * value is sufficient for request routing within each queue.
  * @{
  */
-#define ORDER_PRIMI_TYPE 1
-#define ORDER_SECONDI_TYPE 1
-#define ORDER_COFFEE_TYPE 1
-#define ORDER_CASSA_TYPE 1
-#define JOLLY_MSG_TYPE 63
-#define ORDER_TYPE 1
+#define ORDER_TYPE 1 /**< @brief Message type for all station order requests */
 /** @} */
 
 /**
  * @brief Macro to compute message body size for msgsnd/msgrcv.
+ *
+ * System V message queues expect the payload size excluding the leading
+ * @c long @c mtype field. This macro computes that size for any message
+ * struct whose first member is @c long @c mytype.
  */
 #define MSG_CONTENT_SIZE(msg_struct) (sizeof(msg_struct) - sizeof(long))
 
@@ -93,20 +94,6 @@ typedef struct {
   pid_t pid;           /**< @brief Process ID of the paying user (utente) */
 } OrderMsg;
 
-/**
- * @struct StationMsg
- * @brief Represents a dynamic station reassignment message sent to a Jolly
- * operator.
- *
- * Sent by the manager (responsabile_mensa) to route a wildcard worker to an
- * overloaded station.
- */
-typedef struct {
-  long mytype;    /**< @brief Message type (set to JOLLY_MSG_TYPE) */
-  int station_id; /**< @brief Index of the target station to relocate to
-                     (STATION_*) */
-} StationMsg;
-
 /* ========================================================================== */
 /*                             SEMAPHORE CONFIGURATION                        */
 /* ========================================================================== */
@@ -152,6 +139,8 @@ typedef struct {
 /**
  * @name Station Indices
  * Unique numerical identifiers for each cafeteria station.
+ * Food stations (Primi, Secondi, Coffee) must precede the Cashier
+ * so that NUM_FOOD_STATIONS = NUM_STATIONS - 1 holds.
  * @{
  */
 #define STATION_PRIMI 0   /**< @brief Index for the First Course station */
@@ -159,6 +148,9 @@ typedef struct {
 #define STATION_COFFEE 2  /**< @brief Index for the Coffee/Dessert station */
 #define STATION_CASSA 3   /**< @brief Index for the Cashier station */
 #define NUM_STATIONS 4    /**< @brief Total number of operational stations */
+#define NUM_FOOD_STATIONS                                                      \
+  (NUM_STATIONS - 1) /**< @brief Number of food-serving stations (excludes     \
+                        Cashier) */
 /** @} */
 
 /**
@@ -176,10 +168,13 @@ typedef struct {
 /** @} */
 
 /**
- * @name Simulation Timing and Child Tracking
- * Macros to track children and compute workday limits.
+ * @name Simulation Timing
+ * Macros for time-related computations within the simulated workday.
+ * All simulated durations are expressed in simulated seconds unless
+ * otherwise stated.
  * @{
  */
+
 /**
  * @brief Computes the total number of child processes spawned in the
  * simulation.
@@ -188,19 +183,54 @@ typedef struct {
 #define TOTAL_CHILDREN(shm)                                                    \
   (((shm)->config.nof_workers) + ((shm)->config.nof_users))
 
-#define SIM_DAY_SECOND(i)                                                      \
-  (i * 60 * 60) /**< @brief Total simulated seconds in an i-hour workday */
+/**
+ * @brief Converts simulated hours to simulated seconds.
+ * @param i Number of simulated hours.
+ */
+#define SIM_DAY_SECOND(i) (((i) * 60 * 60))
+
+/**
+ * @brief Converts simulated minutes to simulated seconds.
+ * @param i Number of simulated minutes.
+ */
+#define WORK_MINUTE(i) ((i) * (60))
+
+/**
+ * @brief Interval between automatic portion refills (in simulated minutes).
+ */
+#define REFILL_INTERVAL 10
+
+/**
+ * @brief Refill interval converted to simulated seconds.
+ *
+ * Derived from REFILL_INTERVAL for direct use with sim_sleep().
+ */
+#define REFILL_INTERVAL_SECS ((REFILL_INTERVAL) * (60))
+
+/**
+ * @brief Duration of an operator's break (in simulated minutes).
+ *
+ * When an operator takes a pause, they are inactive for this many
+ * simulated minutes (converted to seconds at the call site via
+ * WORKER_PAUSE * 60).
+ */
+#define WORKER_PAUSE 15
 /** @} */
 
-#define EXIT_NOFOOD 2
+/**
+ * @name Utility Macros
+ * General-purpose helper macros.
+ * @{
+ */
 
-#define WORK_MINUTE(i) ((i) * (60))
-#define REFILL_INTERVAL 10
-#define SECOND_TO_REFILL ((REFILL_INTERVAL) * (60))
-
+/**
+ * @brief Returns the minimum of two values.
+ *
+ * Both arguments are evaluated exactly once per branch.
+ * @warning Both @p a and @p b are evaluated more than once if the
+ *          preprocessor expands them; avoid side-effecting expressions.
+ */
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
+/** @} */
 
-#define FOOD_STATION 3
-
-#define WORKER_PAUSE 15
 #endif

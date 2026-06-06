@@ -26,12 +26,12 @@
 
 extern char **environ;
 
-static int shm_id = -1;
-static int sem_id = -1;
-static int msg_queues[NUM_QUEUES] = {-1, -1, -1, -1, -1};
-static struct SharedData *shm = NULL;
-static pid_t *operators = NULL;
-static pid_t *users = NULL;
+static int shm_id = -1;                      /**< @brief Shared memory identifier for System V segment */
+static int sem_id = -1;                      /**< @brief Semaphore set identifier */
+static int msg_queues[NUM_QUEUES] = {-1, -1, -1, -1, -1}; /**< @brief Array of message queue identifiers */
+static struct SharedData *shm = NULL;       /**< @brief Pointer to the SharedData structure in shared memory */
+static pid_t *operators = NULL;              /**< @brief Array storing child PIDs of spawned operators */
+static pid_t *users = NULL;                  /**< @brief Array storing child PIDs of spawned users */
 
 /**
  * @brief Releases all IPC resources and dynamic memory at process exit.
@@ -84,18 +84,18 @@ static void wait_for_children() {
 }
 
 /**
- * @brief Signal handler for SIGINT.
+ * @brief Signal handler for SIGINT and SIGTERM.
  *
  * Triggers a clean exit which in turn invokes the atexit-registered
  * cleanup_ipc() function to release all IPC resources.
  *
- * @param sig Signal number (unused).
+ * @param sig Signal number (SIGINT or SIGTERM).
  */
 static void handle_signal(int sig) {
   (void)sig;
   if (shm != NULL) {
     shm->simulation_running = 0;
-    shm->termination_cause = 2; // SIGINT / external signal
+    shm->termination_cause = 2; /* SIGINT / external signal */
   }
   if (operators != NULL && shm != NULL) {
     for (int i = 0; i < shm->config.nof_workers; i++) {
@@ -115,7 +115,7 @@ static void handle_signal(int sig) {
  * @brief Registers cleanup handlers and signal dispositions.
  *
  * Registers cleanup_ipc() with atexit() and installs handle_signal()
- * as the SIGINT handler via sigaction().
+ * as the SIGINT and SIGTERM handler via sigaction().
  */
 static void set_exit() {
   atexit(cleanup_ipc);
@@ -145,6 +145,8 @@ static void initialize_shm() {
  * Allocates NUM_SEMS semaphores and sets their initial values:
  * mutexes to 1, station seats to the configured capacity,
  * and barrier semaphores (SEM_READY, SEM_DAY_START) to 0.
+ *
+ * @param shm Pointer to the SharedData structure.
  */
 static void initialize_sem(struct SharedData *shm) {
   sem_id = create_semaphore_set(NUM_SEMS);
@@ -166,33 +168,53 @@ static void initialize_sem(struct SharedData *shm) {
   shm->sem_id = sem_id;
 }
 
+/**
+ * @brief Initializes the message queue handles array.
+ *
+ * Sets all message queue identifiers inside the SharedData structure to -1.
+ *
+ * @param shm Pointer to the SharedData structure.
+ */
 static void initialize_queues(struct SharedData *shm) {
   for (int i = 0; i < NUM_QUEUES; i++) {
     shm->msg_queue_list[i] = -1;
   }
 }
 
+/**
+ * @brief Runs the portion refill routine for the current day.
+ *
+ * Runs for the 8-hour workday, waking up every REFILL_INTERVAL minutes (in simulated time)
+ * to increment portion counts for Primi and Secondi by 1, up to their max capacities.
+ *
+ * @param shm Pointer to the SharedData structure.
+ */
 static void refill_routine(struct SharedData *shm) {
   for (int i = 0; i < (WORK_MINUTE(8) / REFILL_INTERVAL); i++) {
-
-    sim_sleep(SECOND_TO_REFILL, shm->config.n_nano_secs);
+    sim_sleep(REFILL_INTERVAL_SECS, shm->config.n_nano_secs);
     sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
     for (int j = 0; j < NUM_STATIONS - 1; j++) {
-
       int nof_type = shm->stations[j].nof_type;
       int max_portions = shm->stations[j].max_portions;
-      int avg_refill = shm->stations[j].avg_refill;
 
       for (int n = 0; n < nof_type; n++) {
-
         int *portion_left = &shm->stations[j].portion_left[n];
-        *portion_left = MIN(*portion_left + avg_refill, max_portions);
+        *portion_left = MIN(*portion_left + 1, max_portions);
       }
     }
     sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
   }
 }
 
+/**
+ * @brief Prepares the shared memory and message queues for a new day.
+ *
+ * Resets the current day indicator, enables day_running, initializes the message queues,
+ * and refills food portions to the starting quantities.
+ *
+ * @param shm Pointer to the SharedData structure.
+ * @param current_day Index of the current day starting.
+ */
 static void prepare_day(struct SharedData *shm, int current_day) {
   sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
   shm->current_day = current_day;
@@ -412,7 +434,7 @@ static void initialize_stations(struct SharedData *shm) {
   shm->stations[STATION_PRIMI].avg_srvc = shm->config.avg_srvc_primi;
   shm->stations[STATION_PRIMI].srvc_delta = 50;
   shm->stations[STATION_PRIMI].sem_seats_index = SEM_SEATS_PRIMI;
-  shm->stations[STATION_PRIMI].msg_type = ORDER_PRIMI_TYPE;
+  shm->stations[STATION_PRIMI].msg_type = ORDER_TYPE;
   shm->stations[STATION_PRIMI].queue_length = 0;
   shm->stations[STATION_PRIMI].active_operators = 0;
   shm->stations[STATION_PRIMI].max_operators = shm->config.nof_wk_seats_primi;
@@ -422,7 +444,7 @@ static void initialize_stations(struct SharedData *shm) {
   shm->stations[STATION_SECONDI].avg_srvc = shm->config.avg_srvc_secondi;
   shm->stations[STATION_SECONDI].srvc_delta = 50;
   shm->stations[STATION_SECONDI].sem_seats_index = SEM_SEATS_SECONDI;
-  shm->stations[STATION_SECONDI].msg_type = ORDER_SECONDI_TYPE;
+  shm->stations[STATION_SECONDI].msg_type = ORDER_TYPE;
   shm->stations[STATION_SECONDI].queue_length = 0;
   shm->stations[STATION_SECONDI].active_operators = 0;
   shm->stations[STATION_SECONDI].max_operators =
@@ -434,7 +456,7 @@ static void initialize_stations(struct SharedData *shm) {
   shm->stations[STATION_COFFEE].avg_srvc = shm->config.avg_srvc_coffee;
   shm->stations[STATION_COFFEE].srvc_delta = 80;
   shm->stations[STATION_COFFEE].sem_seats_index = SEM_SEATS_COFFEE;
-  shm->stations[STATION_COFFEE].msg_type = ORDER_COFFEE_TYPE;
+  shm->stations[STATION_COFFEE].msg_type = ORDER_TYPE;
   shm->stations[STATION_COFFEE].queue_length = 0;
   shm->stations[STATION_COFFEE].active_operators = 0;
   shm->stations[STATION_COFFEE].max_operators = shm->config.nof_wk_seats_coffee;
@@ -443,24 +465,27 @@ static void initialize_stations(struct SharedData *shm) {
   shm->stations[STATION_CASSA].avg_srvc = shm->config.avg_srvc_cassa;
   shm->stations[STATION_CASSA].srvc_delta = 20;
   shm->stations[STATION_CASSA].sem_seats_index = SEM_SEATS_CASSA;
-  shm->stations[STATION_CASSA].msg_type = ORDER_CASSA_TYPE;
+  shm->stations[STATION_CASSA].msg_type = ORDER_TYPE;
   shm->stations[STATION_CASSA].queue_length = 0;
   shm->stations[STATION_CASSA].active_operators = 0;
   shm->stations[STATION_CASSA].max_operators = shm->config.nof_wk_seats_cassa;
 }
 
-int main(int argc, char *argv[]) {
-
-  set_exit();
-
+/**
+ * @brief Performs all global system initialization steps.
+ *
+ * Sets up shared memory, configurations, station data structures,
+ * semaphore sets, empty message queues list, reads the menu file,
+ * and allocates memory for tracking child process PIDs.
+ *
+ * @param argc Count of command line arguments.
+ * @param argv Vector of command line arguments.
+ */
+static void initialize_system(int argc, char *argv[]) {
   initialize_shm();
-
   parse_config((argc > 1) ? argv[1] : NULL, &shm->config);
-
   initialize_stations(shm);
-
   initialize_sem(shm);
-
   initialize_queues(shm);
 
   if (read_menu_file(shm->config.menu_file) == -1) {
@@ -477,75 +502,90 @@ int main(int argc, char *argv[]) {
     perror("ERROR MALLOC USERS");
     exit(EXIT_FAILURE);
   }
+}
 
-  shm->simulation_running = 1;
-
+/**
+ * @brief Spawns all operators and user processes.
+ */
+static void spawn_all_children() {
   initialize_operators();
-
   initialize_users();
+}
 
+/**
+ * @brief Executes the simulation loop for a single day.
+ *
+ * Prepares day, signals children to start via SEM_DAY_START, blocks to execute refills
+ * during the day, calculates overload status at the end of the day, sets day running flags,
+ * removes queues, waits for children to finish their routines, computes and records leftovers,
+ * and prints daily reports.
+ *
+ * @param current_day Index of the day to simulate.
+ * @return 1 if an overload was detected at the end of the day, 0 otherwise.
+ */
+static int run_daily_cycle(int current_day) {
+  prepare_day(shm, current_day);
+
+  /* Start the simulation day for all children */
+  sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN(shm), 0);
+
+  refill_routine(shm);
+
+  sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+  int total_queued = 0;
+  for (int j = 0; j < NUM_STATIONS; j++) {
+    total_queued += shm->stations[j].queue_length;
+  }
+  int is_overloaded = (total_queued > shm->config.overload_threshold);
+  if (is_overloaded) {
+    shm->termination_cause = 1;
+    shm->simulation_running = 0;
+  }
+  shm->day_running = 0;
+
+  for (int i = 0; i < NUM_QUEUES; i++) {
+    remove_message_queue(msg_queues[i]);
+    msg_queues[i] = -1;
+    shm->msg_queue_list[i] = -1;
+  }
+  sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+
+  /* Wait for all children to complete their daily routine and signal ready */
   sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
 
-  for (int current_day = 1; current_day <= shm->config.sim_duration;
-       current_day++) {
-    prepare_day(shm, current_day);
-
-    sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN(shm), 0);
-
-    refill_routine(shm);
-
-    sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-    int total_queued = 0;
-    for (int j = 0; j < NUM_STATIONS; j++) {
-      total_queued += shm->stations[j].queue_length;
-    }
-    int is_overloaded = (total_queued > shm->config.overload_threshold);
-    if (is_overloaded) {
-      shm->termination_cause = 1;
-      shm->simulation_running = 0;
-    }
-    shm->day_running = 0;
-
-    for (int i = 0; i < NUM_QUEUES; i++) {
-      remove_message_queue(msg_queues[i]);
-      msg_queues[i] = -1;
-      shm->msg_queue_list[i] = -1;
-    }
-    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-
-    /* Wait for all children to complete their day and signal ready */
-    sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
-
-    /* Now compute stats and leftovers safely */
-    sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-    int leftover_primi = 0;
-    for (int n = 0; n < shm->stations[STATION_PRIMI].nof_type; n++) {
-      leftover_primi += shm->stations[STATION_PRIMI].portion_left[n];
-    }
-    shm->sim_stats.dishes_leftover_primi_today = leftover_primi;
-
-    int leftover_secondi = 0;
-    for (int n = 0; n < shm->stations[STATION_SECONDI].nof_type; n++) {
-      leftover_secondi += shm->stations[STATION_SECONDI].portion_left[n];
-    }
-    shm->sim_stats.dishes_leftover_secondi_today = leftover_secondi;
-
-    print_daily_stats(&shm->sim_stats, current_day);
-    accumulate_and_reset_daily_stats(&shm->sim_stats);
-    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-
-    if (is_overloaded) {
-      break;
-    }
+  /* Safely compute leftovers and update stats */
+  sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+  int leftover_primi = 0;
+  for (int n = 0; n < shm->stations[STATION_PRIMI].nof_type; n++) {
+    leftover_primi += shm->stations[STATION_PRIMI].portion_left[n];
   }
+  shm->sim_stats.dishes_leftover_primi_today = leftover_primi;
 
-  /* --- Phase 5: Graceful shutdown --- */
+  int leftover_secondi = 0;
+  for (int n = 0; n < shm->stations[STATION_SECONDI].nof_type; n++) {
+    leftover_secondi += shm->stations[STATION_SECONDI].portion_left[n];
+  }
+  shm->sim_stats.dishes_leftover_secondi_today = leftover_secondi;
+
+  print_daily_stats(&shm->sim_stats, current_day);
+  accumulate_and_reset_daily_stats(&shm->sim_stats);
+  sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+
+  return is_overloaded;
+}
+
+/**
+ * @brief Executes a graceful shutdown of the entire simulation.
+ *
+ * Declares simulation as stopped, signals remaining blocked children,
+ * collects child processes exit statuses, and prints final stats.
+ */
+static void execute_graceful_shutdown() {
   sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
   shm->simulation_running = 0;
   sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
-  /* Send SIGUSR1 to all child processes one last time to make sure they wake up
-   */
+  /* Send SIGUSR1 to all child processes one last time to make sure they wake up and exit */
   for (int i = 0; i < shm->config.nof_workers; i++) {
     kill(operators[i], SIGUSR1);
   }
@@ -553,14 +593,46 @@ int main(int argc, char *argv[]) {
     kill(users[i], SIGUSR1);
   }
 
-  /* Wake up any children waiting on SEM_DAY_START so they check
-   * simulation_running and exit */
+  /* Wake up any children waiting on SEM_DAY_START so they check simulation_running and exit */
   sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN(shm), 0);
 
   /* Reap all child processes before IPC cleanup runs via atexit */
   wait_for_children();
 
   print_final_stats(&shm->sim_stats, shm->termination_cause);
+}
 
-  exit(0);
+/**
+ * @brief Main coordinator entry point.
+ *
+ * Performs global initialization, loads configuration, sets up IPC, spawns children,
+ * orchestrates the simulation cycle day by day, checks for overload conditions,
+ * and handles clean shutdown at the end.
+ *
+ * @param argc Count of command line arguments.
+ * @param argv Vector of command line arguments.
+ * @return 0 on successful termination.
+ */
+int main(int argc, char *argv[]) {
+  set_exit();
+
+  initialize_system(argc, argv);
+
+  shm->simulation_running = 1;
+
+  spawn_all_children();
+
+  /* Wait for all children to complete their initialization and signal ready */
+  sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
+
+  for (int current_day = 1; current_day <= shm->config.sim_duration; current_day++) {
+    int overload = run_daily_cycle(current_day);
+    if (overload) {
+      break;
+    }
+  }
+
+  execute_graceful_shutdown();
+
+  return 0;
 }
