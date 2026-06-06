@@ -145,7 +145,7 @@ void send_message(int mqid, void *msg, size_t size, int flags) {
 
 int receive_message(int mqid, void *msg, size_t size, long mtype, int flags) {
   if (msgrcv(mqid, msg, size, mtype, flags) == -1) {
-    if (errno == EINTR || errno == ENOMSG) {
+    if (errno == EINTR || errno == EIDRM || errno == EINVAL) {
       return -1;
     }
     perror("ERROR RECIVING MESSAGE");

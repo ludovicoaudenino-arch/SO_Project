@@ -35,6 +35,10 @@ static void parse_arguments(int argc, char *argv[]) {
   }
   shm_id = atoi(argv[1]);
   target_station = atoi(argv[2]);
+  if (target_station < 0 || target_station >= NUM_STATIONS) {
+    perror("ERROR ARGUMENT 2: TOO MANY STATION");
+    exit(EXIT_FAILURE);
+  }
 }
 
 static void serve_primi_secondi(struct SharedData *shm, ServingMsg *order) {
@@ -109,20 +113,13 @@ static void serve_cassa(struct SharedData *shm, OrderMsg *order) {
 
 static int wait_order(struct SharedData *shm, void *order, int target_station,
                       size_t msg_size) {
-  int reply_received = 0;
-
-  while (reply_received == 0) {
-    if (receive_message(shm->msg_queue_list[target_station], order, msg_size,
-                        shm->stations[target_station].msg_type,
-                        IPC_NOWAIT) == -1) {
-      if (!shm->day_running) {
-        return 0;
-      }
-      usleep(1000);
-    } else {
-      reply_received = 1;
-    }
+  int result =
+      receive_message(shm->msg_queue_list[target_station], order, msg_size,
+                      shm->stations[target_station].msg_type, 0);
+  if (result == -1) {
+    return 0;
   }
+
   return 1;
 }
 
@@ -180,6 +177,23 @@ static void run_workday(struct SharedData *shm) {
   }
 }
 
+static void joint_stazione(struct SharedData *shm) {
+  int target_sem = shm->stations[target_station].sem_seats_index;
+  sem_op(shm->sem_id, target_sem, -1, SEM_UNDO);
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+  shm->stations[target_station].active_operators++;
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+  stats_record_active_operator(&shm->sim_stats, shm->sem_id);
+}
+
+static void leave_stazione(struct SharedData *shm) {
+  int target_sem = shm->stations[target_station].sem_seats_index;
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+  shm->stations[target_station].active_operators--;
+  sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+  sem_op(shm->sem_id, target_sem, +1, SEM_UNDO);
+}
+
 int main(int argc, char *argv[]) {
   (void)argc;
   (void)argv;
@@ -193,28 +207,19 @@ int main(int argc, char *argv[]) {
   seed = time(NULL) ^ getpid();
   nof_pause = shm->config.nof_pause;
 
-  while (shm->simulation_running) {
+  while (1) {
     sem_op(shm->sem_id, SEM_READY, +1, 0);
     sem_op(shm->sem_id, SEM_DAY_START, -1, 0);
 
-    if (target_station >= 0 && target_station <= 3) {
-      int target_sem = shm->stations[target_station].sem_seats_index;
-      sem_op(shm->sem_id, target_sem, -1, SEM_UNDO);
-      sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-      shm->stations[target_station].active_operators++;
-      sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-      stats_record_active_operator(&shm->sim_stats, shm->sem_id);
+    if (!shm->simulation_running) {
+      break;
     }
+
+    joint_stazione(shm);
 
     run_workday(shm);
 
-    if (target_station >= 0 && target_station <= 3) {
-      int target_sem = shm->stations[target_station].sem_seats_index;
-      sem_op(shm->sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-      shm->stations[target_station].active_operators--;
-      sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-      sem_op(shm->sem_id, target_sem, +1, SEM_UNDO);
-    }
+    leave_stazione(shm);
   }
   return 0;
 }

@@ -12,8 +12,8 @@
 #include "config.h"
 #include "ipc_utils.h"
 #include "shared_data.h"
-#include "time_utils.h"
 #include "stats.h"
+#include "time_utils.h"
 #include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -84,22 +84,6 @@ static void wait_for_children() {
 }
 
 /**
- * @brief Discards all messages currently remaining in all message queues.
- *
- * This prevents stale requests from a previous day from leaking into and
- * corrupting the next day's simulation. Called when all children are safely
- * blocked at the daily startup barrier.
- */
-static void purge_all_queues(struct SharedData *shm) {
-  char buf[2048];
-  for (int i = 0; i < NUM_QUEUES; i++) {
-    while (msgrcv(shm->msg_queue_list[i], buf, sizeof(buf) - sizeof(long), 0,
-                  IPC_NOWAIT) != -1) {
-    }
-  }
-}
-
-/**
  * @brief Signal handler for SIGINT.
  *
  * Triggers a clean exit which in turn invokes the atexit-registered
@@ -109,6 +93,21 @@ static void purge_all_queues(struct SharedData *shm) {
  */
 static void handle_signal(int sig) {
   (void)sig;
+  if (shm != NULL) {
+    shm->simulation_running = 0;
+    shm->termination_cause = 2; // SIGINT / external signal
+  }
+  if (operators != NULL && shm != NULL) {
+    for (int i = 0; i < shm->config.nof_workers; i++) {
+      kill(operators[i], SIGINT);
+    }
+  }
+  if (users != NULL && shm != NULL) {
+    for (int i = 0; i < shm->config.nof_users; i++) {
+      kill(users[i], SIGINT);
+    }
+  }
+  wait_for_children();
   exit(EXIT_FAILURE);
 }
 
@@ -125,6 +124,7 @@ static void set_exit() {
   sa.sa_handler = handle_signal;
   sigemptyset(&sa.sa_mask);
   sigaction(SIGINT, &sa, NULL);
+  sigaction(SIGTERM, &sa, NULL);
 }
 
 /**
@@ -146,9 +146,10 @@ static void initialize_shm() {
  * mutexes to 1, station seats to the configured capacity,
  * and barrier semaphores (SEM_READY, SEM_DAY_START) to 0.
  */
-static void initialize_sem() {
+static void initialize_sem(struct SharedData *shm) {
   sem_id = create_semaphore_set(NUM_SEMS);
   unsigned short sem_init_vals[NUM_SEMS];
+
   sem_init_vals[SEM_MUTEX_SHM] = 1;
   sem_init_vals[SEM_MUTEX_PORZIONI_P] = 1;
   sem_init_vals[SEM_MUTEX_STATS] = 1;
@@ -160,7 +161,54 @@ static void initialize_sem() {
   sem_init_vals[SEM_TABLE_SEATS] = shm->config.nof_table_seats;
   sem_init_vals[SEM_DAY_START] = 0;
   sem_init_vals[SEM_READY] = 0;
+
   set_all_semaphores(sem_id, sem_init_vals);
+  shm->sem_id = sem_id;
+}
+
+static void initialize_queues(struct SharedData *shm) {
+  for (int i = 0; i < NUM_QUEUES; i++) {
+    shm->msg_queue_list[i] = -1;
+  }
+}
+
+static void refill_routine(struct SharedData *shm) {
+  for (int i = 0; i < (WORK_MINUTE(8) / REFILL_INTERVAL); i++) {
+
+    sim_sleep(SECOND_TO_REFILL, shm->config.n_nano_secs);
+    sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+    for (int j = 0; j < NUM_STATIONS - 1; j++) {
+
+      int nof_type = shm->stations[j].nof_type;
+      int max_portions = shm->stations[j].max_portions;
+      int avg_refill = shm->stations[j].avg_refill;
+
+      for (int n = 0; n < nof_type; n++) {
+
+        int *portion_left = &shm->stations[j].portion_left[n];
+        *portion_left = MIN(*portion_left + avg_refill, max_portions);
+      }
+    }
+    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+  }
+}
+
+static void prepare_day(struct SharedData *shm, int current_day) {
+  sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+  shm->current_day = current_day;
+  shm->day_running = 1;
+  for (int i = 0; i < NUM_QUEUES; i++) {
+    msg_queues[i] = create_message_queue();
+    shm->msg_queue_list[i] = msg_queues[i];
+  }
+  for (int j = 0; j < shm->stations[STATION_PRIMI].nof_type; j++) {
+    shm->stations[STATION_PRIMI].portion_left[j] = shm->config.avg_refill_primi;
+  }
+  for (int j = 0; j < shm->stations[STATION_SECONDI].nof_type; j++) {
+    shm->stations[STATION_SECONDI].portion_left[j] =
+        shm->config.avg_refill_secondi;
+  }
+  sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 }
 
 /**
@@ -403,29 +451,22 @@ static void initialize_stations(struct SharedData *shm) {
 
 int main(int argc, char *argv[]) {
 
-  /* --- Phase 1: Setup signal handlers and atexit cleanup --- */
   set_exit();
 
-  /* --- Phase 2: Create IPC resources and parse configuration --- */
   initialize_shm();
 
   parse_config((argc > 1) ? argv[1] : NULL, &shm->config);
 
   initialize_stations(shm);
 
+  initialize_sem(shm);
+
+  initialize_queues(shm);
+
   if (read_menu_file(shm->config.menu_file) == -1) {
     exit(EXIT_FAILURE);
   }
 
-  initialize_sem();
-  shm->sem_id = sem_id;
-
-  for (int i = 0; i < NUM_QUEUES; i++) {
-    msg_queues[i] = create_message_queue();
-    shm->msg_queue_list[i] = msg_queues[i];
-  }
-
-  /* --- Phase 3: Allocate PID arrays and spawn child processes --- */
   operators = malloc(shm->config.nof_workers * sizeof(pid_t));
   if (operators == NULL) {
     perror("ERROR MALLOC OPERATORS");
@@ -442,63 +483,35 @@ int main(int argc, char *argv[]) {
   initialize_operators();
 
   initialize_users();
-  /* Wait for all children to signal readiness at the barrier for the first day */
+
   sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
 
-  /* --- Phase 4: Daily simulation loop --- */
   for (int current_day = 1; current_day <= shm->config.sim_duration;
        current_day++) {
-
-    /* Purge stale messages from queues before starting a new day */
-    purge_all_queues(shm);
-
-    /* Prepare the new day state under mutex protection */
-    sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-    shm->current_day = current_day;
-    shm->day_running = 1;
-    for (int j = 0; j < shm->stations[STATION_PRIMI].nof_type; j++) {
-      shm->stations[STATION_PRIMI].portion_left[j] =
-          shm->config.avg_refill_primi;
-    }
-    for (int j = 0; j < shm->stations[STATION_SECONDI].nof_type; j++) {
-      shm->stations[STATION_SECONDI].portion_left[j] =
-          shm->config.avg_refill_secondi;
-    }
-    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-
-    /* Broadcast day start: unblock all children simultaneously */
+    prepare_day(shm, current_day);
 
     sem_op(sem_id, SEM_DAY_START, +TOTAL_CHILDREN(shm), 0);
-    for (int i = 0; i < (WORK_MINUTE(8) / REFILL_INTERVAL); i++) {
 
-      sim_sleep(SECOND_TO_REFILL, shm->config.n_nano_secs);
-      sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
-      for (int j = 0; j < NUM_STATIONS - 1; j++) {
+    refill_routine(shm);
 
-        int nof_type = shm->stations[j].nof_type;
-        int max_portions = shm->stations[j].max_portions;
-        int avg_refill = shm->stations[j].avg_refill;
-
-        for (int n = 0; n < nof_type; n++) {
-
-          int *portion_left = &shm->stations[j].portion_left[n];
-          *portion_left = MIN(*portion_left + avg_refill, max_portions);
-        }
-      }
-      sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
-    }
-    /* Signal end of service for this day */
     sem_op(sem_id, SEM_MUTEX_SHM, -1, SEM_UNDO);
+    int total_queued = 0;
+    for (int j = 0; j < NUM_STATIONS; j++) {
+      total_queued += shm->stations[j].queue_length;
+    }
+    int is_overloaded = (total_queued > shm->config.overload_threshold);
+    if (is_overloaded) {
+      shm->termination_cause = 1;
+      shm->simulation_running = 0;
+    }
     shm->day_running = 0;
-    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
-    /* Send SIGUSR1 to interrupt any blocking receive_message */
-    for (int i = 0; i < shm->config.nof_workers; i++) {
-      kill(operators[i], SIGUSR1);
+    for (int i = 0; i < NUM_QUEUES; i++) {
+      remove_message_queue(msg_queues[i]);
+      msg_queues[i] = -1;
+      shm->msg_queue_list[i] = -1;
     }
-    for (int i = 0; i < shm->config.nof_users; i++) {
-      kill(users[i], SIGUSR1);
-    }
+    sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 
     /* Wait for all children to complete their day and signal ready */
     sem_op(sem_id, SEM_READY, -TOTAL_CHILDREN(shm), 0);
@@ -520,6 +533,10 @@ int main(int argc, char *argv[]) {
     print_daily_stats(&shm->sim_stats, current_day);
     accumulate_and_reset_daily_stats(&shm->sim_stats);
     sem_op(sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
+
+    if (is_overloaded) {
+      break;
+    }
   }
 
   /* --- Phase 5: Graceful shutdown --- */
@@ -543,7 +560,7 @@ int main(int argc, char *argv[]) {
   /* Reap all child processes before IPC cleanup runs via atexit */
   wait_for_children();
 
-  print_final_stats(&shm->sim_stats, 0);
+  print_final_stats(&shm->sim_stats, shm->termination_cause);
 
   exit(0);
 }

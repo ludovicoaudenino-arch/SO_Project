@@ -67,25 +67,15 @@ static void leave_queue(struct SharedData *shm, int station_type) {
   sem_op(shm->sem_id, SEM_MUTEX_SHM, +1, SEM_UNDO);
 }
 
-static int wait_reply(struct SharedData *shm, ServedMsg *served,
-                      int station_type) {
-  int reply_received = 0;
-
-  while (reply_received == 0) {
-    if (receive_message(shm->msg_queue_list[NUM_QUEUES - 1], served,
-                        MSG_CONTENT_SIZE(ServedMsg), pid, IPC_NOWAIT) == -1) {
-      if (should_exit || !shm->day_running) {
-        leave_queue(shm, station_type);
-        return 0;
-      }
-      usleep(1000);
-    } else {
-      reply_received = 1;
-    }
+static int wait_reply(struct SharedData *shm, ServedMsg *served) {
+  if (receive_message(shm->msg_queue_list[NUM_QUEUES - 1], served,
+                      MSG_CONTENT_SIZE(ServedMsg), pid, 0) == -1) {
+    return 0;
+  } else {
+    return 1;
   }
-
-  return 1;
 }
+
 static void choose_preferenze(int *preferenze_type, int nof_type) {
   for (int i = 0; i < nof_type; i++) {
     preferenze_type[i] = i;
@@ -111,33 +101,37 @@ static int try_order(struct SharedData *shm, int *preferenze_type,
   struct timespec start_ts, end_ts;
   clock_gettime(CLOCK_MONOTONIC, &start_ts);
 
-  enter_queue(shm, station_type);
   ServingMsg order = {.pid = pid, .mytype = ORDER_TYPE};
   ServedMsg check_served = {.served = 0};
+  int success = 0;
 
+  enter_queue(shm, station_type);
   for (int attempt = 0; attempt < shm->stations[station_type].nof_type;
        attempt++) {
     order.dish_type = (preferenze_type == NULL) ? 0 : preferenze_type[attempt];
     send_message(shm->msg_queue_list[station_type], &order,
                  MSG_CONTENT_SIZE(ServingMsg), 0);
 
-    if (wait_reply(shm, &check_served, station_type) == 0) {
-      return 0;
+    if (!wait_reply(shm, &check_served)) {
+      break;
     }
 
     if (check_served.served) {
+      success = 1;
       break;
     }
   }
-
   leave_queue(shm, station_type);
 
-  clock_gettime(CLOCK_MONOTONIC, &end_ts);
-  long diff_ns = (end_ts.tv_sec - start_ts.tv_sec) * 1000000000L + (end_ts.tv_nsec - start_ts.tv_nsec);
-  long sim_secs = (diff_ns * 60) / shm->config.n_nano_secs;
-  stats_record_wait_time(&shm->sim_stats, shm->sem_id, station_type, sim_secs);
-
-  return check_served.served;
+  if (success) {
+    clock_gettime(CLOCK_MONOTONIC, &end_ts);
+    long diff_ns = (end_ts.tv_sec - start_ts.tv_sec) * 1000000000L +
+                   (end_ts.tv_nsec - start_ts.tv_nsec);
+    long sim_secs = (diff_ns * 60) / shm->config.n_nano_secs;
+    stats_record_wait_time(&shm->sim_stats, shm->sem_id, station_type,
+                           sim_secs);
+  }
+  return success;
 }
 
 static ServedMsg perform_cassa_payment(struct SharedData *shm,
@@ -150,29 +144,28 @@ static ServedMsg perform_cassa_payment(struct SharedData *shm,
   struct timespec start_ts, end_ts;
   clock_gettime(CLOCK_MONOTONIC, &start_ts);
 
-  enter_queue(shm, STATION_CASSA);
   OrderMsg order;
   order.primi_ordered = piatti_ordered[STATION_PRIMI];
   order.secondi_ordered = piatti_ordered[STATION_SECONDI];
   order.coffee_ordered = piatti_ordered[STATION_COFFEE];
   order.pid = pid;
   order.mytype = ORDER_TYPE;
+  ServedMsg served = {.served = 0};
 
+  enter_queue(shm, STATION_CASSA);
   send_message(shm->msg_queue_list[STATION_CASSA], &order,
                MSG_CONTENT_SIZE(OrderMsg), 0);
-
-  ServedMsg served = {.served = 0};
-  if (wait_reply(shm, &served, STATION_CASSA) == 0) {
-    return served;
-  }
-
+  int check_wait = wait_reply(shm, &served);
   leave_queue(shm, STATION_CASSA);
 
-  clock_gettime(CLOCK_MONOTONIC, &end_ts);
-  long diff_ns = (end_ts.tv_sec - start_ts.tv_sec) * 1000000000L + (end_ts.tv_nsec - start_ts.tv_nsec);
-  long sim_secs = (diff_ns * 60) / shm->config.n_nano_secs;
-  stats_record_wait_time(&shm->sim_stats, shm->sem_id, STATION_CASSA, sim_secs);
-
+  if (check_wait) {
+    clock_gettime(CLOCK_MONOTONIC, &end_ts);
+    long diff_ns = (end_ts.tv_sec - start_ts.tv_sec) * 1000000000L +
+                   (end_ts.tv_nsec - start_ts.tv_nsec);
+    long sim_secs = (diff_ns * 60) / shm->config.n_nano_secs;
+    stats_record_wait_time(&shm->sim_stats, shm->sem_id, STATION_CASSA,
+                           sim_secs);
+  }
   return served;
 }
 
@@ -249,9 +242,12 @@ int main(int argc, char *argv[]) {
 
   seed = time(NULL) ^ getpid();
 
-  while (shm->simulation_running == 1) {
+  while (1) {
     sem_op(shm->sem_id, SEM_READY, +1, 0);
     sem_op(shm->sem_id, SEM_DAY_START, -1, 0);
+    if (shm->simulation_running == 0) {
+      break;
+    }
     should_exit = 0;
 
     choose_from_menu(shm);

@@ -58,7 +58,16 @@ void print_daily_stats(const SimStats *s, int day) {
 void print_final_stats(const SimStats *s, int termination_cause) {
   printf("\n\n===== STATISTICHE FINALI DELLA SIMULAZIONE =====\n");
   printf("Giorni di simulazione completati: %d\n", s->days_completed);
-  printf("Motivo terminazione: %s\n", (termination_cause == 0) ? "Normale / Fine Simulazione" : "Interruzione / Errore");
+  printf("Motivo terminazione: ");
+  if (termination_cause == 0) {
+    printf("TIMEOUT\n");
+  } else if (termination_cause == 1) {
+    printf("OVERLOAD\n");
+  } else if (termination_cause == 2) {
+    printf("SIGINT\n");
+  } else {
+    printf("SCONOSCIUTO (%d)\n", termination_cause);
+  }
   printf("------------------------------------------------\n");
   printf("Totale Utenti Serviti: %d\n", s->users_served_total);
   printf("Totale Utenti NON Serviti: %d\n", s->users_not_served_total);

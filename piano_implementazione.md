@@ -1095,12 +1095,12 @@ make clean && make
 
 ### Fase 8: Terminazione e segnali (1-2 giorni)
 
-- [ ] Terminazione per timeout
-- [ ] Terminazione per overload
-- [ ] Signal handler SIGUSR1 in tutti i figli
-- [ ] Signal handler SIGINT nel responsabile mensa (cleanup di emergenza)
-- [ ] Stampa causa di terminazione
-- [ ] Verificare: T2 (timeout), T3 (overload), T6 (SIGINT)
+- [v] Terminazione per timeout
+- [v] Terminazione per overload
+- [v] Signal handler SIGUSR1 in tutti i figli
+- [v] Signal handler SIGINT nel responsabile mensa (cleanup di emergenza)
+- [v] Stampa causa di terminazione
+- [v] Verificare: T2 (timeout), T3 (overload), T6 (SIGINT)
 
 ### Fase 9: Robustezza e test finali (2-3 giorni)
 
