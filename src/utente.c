@@ -109,8 +109,11 @@ static int try_order(struct SharedData *shm, int *preferenze_type,
   for (int attempt = 0; attempt < shm->stations[station_type].nof_type;
        attempt++) {
     order.dish_type = (preferenze_type == NULL) ? 0 : preferenze_type[attempt];
-    send_message(shm->msg_queue_list[station_type], &order,
-                 MSG_CONTENT_SIZE(ServingMsg), 0);
+    int send_result = send_message(shm->msg_queue_list[station_type], &order,
+                                   MSG_CONTENT_SIZE(ServingMsg), 0);
+    if (send_result == -1) {
+      break;
+    }
 
     if (!wait_reply(shm, &check_served)) {
       break;
@@ -153,19 +156,22 @@ static ServedMsg perform_cassa_payment(struct SharedData *shm,
   ServedMsg served = {.served = 0};
 
   enter_queue(shm, STATION_CASSA);
-  send_message(shm->msg_queue_list[STATION_CASSA], &order,
-               MSG_CONTENT_SIZE(OrderMsg), 0);
-  int check_wait = wait_reply(shm, &served);
-  leave_queue(shm, STATION_CASSA);
+  int send_result = send_message(shm->msg_queue_list[STATION_CASSA], &order,
+                                 MSG_CONTENT_SIZE(OrderMsg), 0);
+  if (send_result != -1) {
+    int check_wait = wait_reply(shm, &served);
+    leave_queue(shm, STATION_CASSA);
 
-  if (check_wait) {
-    clock_gettime(CLOCK_MONOTONIC, &end_ts);
-    long diff_ns = (end_ts.tv_sec - start_ts.tv_sec) * 1000000000L +
-                   (end_ts.tv_nsec - start_ts.tv_nsec);
-    long sim_secs = (diff_ns * 60) / shm->config.n_nano_secs;
-    stats_record_wait_time(&shm->sim_stats, shm->sem_id, STATION_CASSA,
-                           sim_secs);
+    if (check_wait) {
+      clock_gettime(CLOCK_MONOTONIC, &end_ts);
+      long diff_ns = (end_ts.tv_sec - start_ts.tv_sec) * 1000000000L +
+                     (end_ts.tv_nsec - start_ts.tv_nsec);
+      long sim_secs = (diff_ns * 60) / shm->config.n_nano_secs;
+      stats_record_wait_time(&shm->sim_stats, shm->sem_id, STATION_CASSA,
+                             sim_secs);
+    }
   }
+  leave_queue(shm, STATION_CASSA);
   return served;
 }
 

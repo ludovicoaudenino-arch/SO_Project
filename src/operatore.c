@@ -66,8 +66,11 @@ static void serve_primi_secondi(struct SharedData *shm, ServingMsg *order) {
   reply.mytype = order->pid;
   reply.served = served;
   reply.pid = getpid();
-  send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
-               MSG_CONTENT_SIZE(ServedMsg), 0);
+  int send_result = send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
+                                 MSG_CONTENT_SIZE(ServedMsg), 0);
+  if (send_result == -1) {
+    return;
+  }
 }
 
 static void serve_caffe(struct SharedData *shm, ServingMsg *order) {
@@ -81,9 +84,11 @@ static void serve_caffe(struct SharedData *shm, ServingMsg *order) {
   reply.mytype = order->pid;
   reply.served = 1;
   reply.pid = getpid();
-
-  send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
-               MSG_CONTENT_SIZE(ServedMsg), 0);
+  int send_result = send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
+                                 MSG_CONTENT_SIZE(ServedMsg), 0);
+  if (send_result == -1) {
+    return;
+  }
   stats_record_dish_served(&shm->sim_stats, sem_id, STATION_COFFEE);
 }
 
@@ -107,8 +112,11 @@ static void serve_cassa(struct SharedData *shm, OrderMsg *order) {
   reply.mytype = order->pid;
   reply.served = 1;
   reply.pid = getpid();
-  send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
-               MSG_CONTENT_SIZE(ServedMsg), 0);
+  int send_result = send_message(shm->msg_queue_list[NUM_QUEUES - 1], &reply,
+                                 MSG_CONTENT_SIZE(ServedMsg), 0);
+  if (send_result == -1) {
+    return;
+  }
 }
 
 static int wait_order(struct SharedData *shm, void *order, int target_station,

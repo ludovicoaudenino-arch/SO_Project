@@ -136,11 +136,15 @@ int create_message_queue() {
   return msg_id;
 }
 
-void send_message(int mqid, void *msg, size_t size, int flags) {
+int send_message(int mqid, void *msg, size_t size, int flags) {
   if (msgsnd(mqid, msg, size, flags) == -1) {
+    if (errno == EINTR || errno == EIDRM || errno == EINVAL) {
+      return -1;
+    }
     perror("ERROR SENDING MESSAGE");
     exit(EXIT_FAILURE);
   }
+  return 0;
 }
 
 int receive_message(int mqid, void *msg, size_t size, long mtype, int flags) {

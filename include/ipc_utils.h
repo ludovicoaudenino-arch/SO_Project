@@ -110,7 +110,7 @@ int create_message_queue();
  * @param size The size of the message text (excluding the mtype field).
  * @param flags The operation flags (e.g., 0, IPC_NOWAIT).
  */
-void send_message(int mqid, void *msg, size_t size, int flags);
+int send_message(int mqid, void *msg, size_t size, int flags);
 
 /**
  * @brief Receives a message from the specified message queue.
